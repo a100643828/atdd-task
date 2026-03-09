@@ -1,0 +1,180 @@
+# Test Definition Template
+#
+# 用途：定義獨立 E2E 測試任務的主檔案
+# 使用者：specist 生成、tester 執行、gatekeeper 審核
+#
+# 複製此檔案到：tests/{project_id}/{test_id}/test.yml
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 基本資訊
+# ═══════════════════════════════════════════════════════════════════════════════
+id: "{test_id}"
+title: "{test_title}"
+type: "e2e-test"
+projectId: "{project_id}"
+status: "requirement"               # requirement | testing | gate | completed | failed
+
+# Epic 關聯（可選）
+epic:
+  id: null                          # Epic ID（如果是 Epic 的子任務）
+  taskRef: null                     # 對應的 Task ID（如 T3-2）
+
+# Domain 參考
+domain:
+  primary: null                     # 主要 Domain（如 Accounting::Invoice）
+  related: []                       # 相關 Domains
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 測試範圍
+# ═══════════════════════════════════════════════════════════════════════════════
+scope:
+  description: |
+    {測試範圍描述}
+
+  # 測試目標
+  targets:
+    - type: "page"                  # page | api | workflow | report
+      path: "/path/to/test"
+      description: "描述"
+
+  # 排除範圍
+  excludes:
+    - "描述排除的項目"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 測試場景清單
+# ═══════════════════════════════════════════════════════════════════════════════
+scenarios:
+  - id: "S1"
+    title: "{場景標題}"
+    file: "scenarios/S1-{scenario_name}.yml"
+    priority: "high"                # high | medium | low
+    status: "pending"               # pending | running | passed | failed | skipped
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 前置條件（Preflight Check）
+# ═══════════════════════════════════════════════════════════════════════════════
+prerequisites:
+  # 環境檢查
+  environment:
+    - check: "server_running"
+      command: "curl -s http://localhost:3000/health"
+      expected: "ok"
+      required: true
+
+    - check: "database_ready"
+      command: "cd {project_path} && rails runner 'puts ActiveRecord::Base.connected?'"
+      expected: "true"
+      required: true
+
+  # 資料檢查
+  data:
+    - check: "test_user_exists"
+      description: "測試帳號存在"
+      query: "User.find_by(email: 'test@example.com')"
+      required: true
+
+    - check: "required_data_exists"
+      description: "必要測試資料存在"
+      script: "scripts/check_data.rb"
+      required: true
+
+  # 執行前置腳本
+  setup:
+    script: "scripts/setup.rb"
+    command: "cd {project_path} && rails runner tests/{project_id}/{test_id}/scripts/setup.rb"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 執行控制
+# ═══════════════════════════════════════════════════════════════════════════════
+execution:
+  status: "pending"                 # pending | running | paused | completed | failed
+  currentScenario: null             # 目前執行的場景 ID
+  currentStep: null                 # 目前執行的步驟 ID
+
+  # 暫停資訊（如果 status == "paused"）
+  pause:
+    reason: null
+    timestamp: null
+    resumable: true
+
+  # 執行設定
+  settings:
+    screenshotOnStep: true          # 每步驟截圖
+    screenshotOnError: true         # 錯誤時截圖
+    stopOnFirstFailure: false       # 第一個失敗就停止
+    timeout: 30000                  # 單步驟超時（毫秒）
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 測試結果
+# ═══════════════════════════════════════════════════════════════════════════════
+results:
+  summary:
+    total: 0
+    passed: 0
+    failed: 0
+    skipped: 0
+    duration: null
+
+  # 各場景結果
+  scenarios: []
+  # 範例：
+  # - id: "S1"
+  #   status: "passed"
+  #   duration: "45s"
+  #   steps:
+  #     - id: 1
+  #       status: "passed"
+  #       screenshot: "screenshots/S1-01-login.png"
+
+  # 發現的問題
+  issues: []
+  # 範例：
+  # - id: "ISS-001"
+  #   severity: "high"              # critical | high | medium | low
+  #   scenario: "S1"
+  #   step: 3
+  #   description: "按鈕無法點擊"
+  #   screenshot: "screenshots/S1-03-error.png"
+  #   fixTask: null                 # 關聯的 Fix 任務 ID
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 清理
+# ═══════════════════════════════════════════════════════════════════════════════
+cleanup:
+  script: "scripts/cleanup.rb"
+  command: "cd {project_path} && rails runner tests/{project_id}/{test_id}/scripts/cleanup.rb"
+  autoCleanup: true                 # 測試完成後自動清理
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 任務追蹤
+# ═══════════════════════════════════════════════════════════════════════════════
+workflow:
+  mode: "guided"
+  currentAgent: "specist"
+
+agents: []
+# 範例：
+# - name: "specist"
+#   role: "需求分析"
+#   phase: "requirement"
+#   metrics:
+#     toolUses: 15
+#     tokens: 28500
+#     duration: "1m 45s"
+
+metrics:
+  totalToolUses: 0
+  totalTokens: 0
+  totalDuration: null
+
+history:
+  - phase: "requirement"
+    timestamp: "{ISO_timestamp}"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 時間戳記
+# ═══════════════════════════════════════════════════════════════════════════════
+createdAt: "{ISO_timestamp}"
+updatedAt: "{ISO_timestamp}"
+completedAt: null

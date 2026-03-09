@@ -1,0 +1,46 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Project config (使用者自行設定，只追蹤 example)
+.claude/config/projects.yml
+.claude/config/jira.yml
+
+# Test run records (本機執行產物，不納入版控)
+**/runs/
+
+# Task records (每個專案各自管理，不納入 atdd-hub 版控)
+tasks/
+
+# Sensitive files (含敏感資訊，不公開)
+github-actions-workflow-audit-report.md
+.claude/config/aws-instances.yml
+acceptance/fixtures/
+
+# Instance registry (本機設定，每台機器不同)
+.instances
+
+# Knowledge confirmation (含本機路徑)
+.claude/.knowledge-confirmed
+.DS_Store
+.claude/settings.local.json

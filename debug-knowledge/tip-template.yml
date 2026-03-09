@@ -1,0 +1,178 @@
+# Debug Tip Template
+# 複製此範本到對應的類型資料夾中，檔名使用描述性名稱
+# 例如: debug-knowledge/integration/2fa-local-user-mismatch.yml
+
+# 基本資訊
+id: "unique-tip-id"                    # 唯一識別碼
+title: "問題標題"                       # 簡短描述
+category: "integration"                 # ui | data | worker | performance | integration | alert | security
+severity: "medium"                      # critical | high | medium | low
+created_at: "2024-01-15"
+updated_at: "2024-01-15"
+
+# Hash Tags（用於快速匹配）
+# 參考 tag-taxonomy.yml 中的分類
+tags:
+  fix_profile:                         # 問題類型（必填，至少一個）
+    - integration
+  layer:                               # 影響層級（必填，至少一個）
+    - application
+    - infrastructure
+  domain:                              # 業務領域（選填，專案特定）
+    - Authentication
+  technology:                          # 技術棧（選填）
+    - rails
+    - devise
+  error_pattern:                       # 錯誤訊息關鍵字（選填）
+    - authentication_failed
+    - otp_failed
+  symptom:                             # 症狀描述（選填）
+    - login_failed
+
+# 問題識別
+identification:
+  # 關鍵字：用於快速匹配（支援正則）
+  keywords:
+    - "關鍵字1"
+    - "關鍵字2"
+    - "/regex_pattern/"
+
+  # 症狀描述：幫助 AI 識別是否為相同問題
+  symptoms:
+    - "錯誤訊息或行為描述 1"
+    - "錯誤訊息或行為描述 2"
+
+  # 常見錯誤訊息
+  error_patterns:
+    - "Error message pattern 1"
+    - "Exception: specific exception name"
+
+  # 問題發生的典型情境
+  typical_context:
+    environments:
+      - "development"
+      - "staging"
+    frameworks:
+      - "Rails 7.x"
+    conditions:
+      - "條件描述"
+
+# 適用範圍
+applicability:
+  projects:
+    - "sf_project"
+    - "core_web"
+    - "*"                               # * 表示所有專案
+  languages:
+    - "ruby"
+    - "javascript"
+  frameworks:
+    - "rails"
+    - "react"
+
+# 調查路徑（最佳實踐）
+investigation_path:
+  # 建議的調查順序
+  steps:
+    - order: 1
+      action: "檢查的第一步"
+      tools:
+        - "Grep"
+        - "Read"
+      target: "要查看的目標"
+      expected: "預期看到什麼"
+
+    - order: 2
+      action: "檢查的第二步"
+      tools:
+        - "Bash"
+      command: "rails runner 'SomeModel.first'"
+      expected: "預期結果"
+
+    - order: 3
+      action: "檢查的第三步"
+      tools:
+        - "Read"
+      target: "config/specific_file.rb"
+      look_for: "要找的內容"
+
+  # 常見的錯誤調查方向（避免浪費時間）
+  anti_patterns:
+    - "不要先去看 X，通常不是那裡的問題"
+    - "不要嘗試 Y 方法，會花很多時間但沒用"
+
+# 根本原因
+root_cause:
+  summary: "問題根源的簡短說明"
+  detailed_explanation: |
+    詳細解釋為什麼會發生這個問題。
+    可以包含多行說明。
+
+    重點：
+    - 原因 1
+    - 原因 2
+
+  affected_components:
+    - "Component A"
+    - "Component B"
+
+# 解決方案
+solution:
+  # 快速修復（臨時解法）
+  quick_fix:
+    description: "快速修復的描述"
+    code: |
+      # 修復代碼範例
+      def quick_fix
+        # ...
+      end
+    warnings:
+      - "這只是臨時解法，注意事項..."
+
+  # 正式修復（推薦做法）
+  proper_fix:
+    description: "正式修復的描述"
+    steps:
+      - step: 1
+        description: "修復步驟 1"
+        code: |
+          # 代碼範例
+        file: "path/to/file.rb"
+
+      - step: 2
+        description: "修復步驟 2"
+        code: |
+          # 代碼範例
+        file: "path/to/another_file.rb"
+
+  # 驗證方式
+  verification:
+    - "如何驗證修復成功 1"
+    - "如何驗證修復成功 2"
+    test_command: "rspec spec/path/to/test_spec.rb"
+
+# 相關資源
+references:
+  - type: "documentation"
+    title: "官方文檔標題"
+    url: "https://..."
+
+  - type: "stackoverflow"
+    title: "相關 StackOverflow 問答"
+    url: "https://..."
+
+  - type: "internal"
+    title: "內部相關文件"
+    path: "docs/related-doc.md"
+
+# 歷史案例
+history:
+  - date: "2024-01-15"
+    project: "core_web"
+    task_id: "abc-123"
+    notes: "首次發現此問題"
+
+  - date: "2024-02-20"
+    project: "sf_project"
+    task_id: "def-456"
+    notes: "在另一個專案也遇到相同問題"

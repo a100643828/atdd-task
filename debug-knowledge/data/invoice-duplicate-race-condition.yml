@@ -1,0 +1,274 @@
+# Invoice Duplicate - Race Condition
+# 發票重複開立問題（併發 Race Condition）
+
+id: "invoice-duplicate-race-condition"
+title: "發票重複開立 - 併發控制不足"
+category: "data"
+severity: "high"
+created_at: "2026-01-27"
+updated_at: "2026-01-27"
+
+# Hash Tags（快速匹配用）
+tags:
+  fix_profile:
+    - data
+    - worker
+  layer:
+    - application
+    - domain
+  domain:
+    - Accounting
+    - Invoice
+    - ElectricityBilling
+  technology:
+    - rails
+    - activerecord
+    - sidekiq
+  error_pattern:
+    - duplicate_key
+    - race_condition
+    - concurrency
+  symptom:
+    - data_inconsistent
+    - duplicate_record
+
+identification:
+  keywords:
+    - "發票重複"
+    - "重複開立"
+    - "duplicate invoice"
+    - "race condition"
+    - "併發"
+    - "concurrency"
+    - "double submit"
+
+  symptoms:
+    - "同一筆資料產生多張發票"
+    - "短時間內出現重複的發票號碼"
+    - "Sidekiq 重試後產生重複資料"
+    - "用戶快速點擊導致重複請求"
+    - "API 呼叫 timeout 後重試產生重複"
+
+  error_patterns:
+    - "Duplicate entry"
+    - "PG::UniqueViolation"
+    - "ActiveRecord::RecordNotUnique"
+    - "已存在相同發票號碼"
+
+  typical_context:
+    environments:
+      - "production"
+      - "staging"
+    frameworks:
+      - "Rails"
+      - "Sidekiq"
+    conditions:
+      - "高流量時段"
+      - "Worker 重試機制"
+      - "前端未做防重複點擊"
+      - "API timeout 後自動重試"
+
+applicability:
+  projects:
+    - "sf_project"
+    - "core_web"
+    - "*"
+  languages:
+    - "ruby"
+  frameworks:
+    - "rails"
+    - "sidekiq"
+
+investigation_path:
+  steps:
+    - order: 1
+      action: "確認重複的時間間隔"
+      tools:
+        - "Bash"
+      command: |
+        rails runner '
+          Invoice.where(invoice_number: "XX12345678")
+                 .order(:created_at)
+                 .pluck(:id, :created_at)
+        '
+      expected: "如果時間間隔 < 1 秒，很可能是 race condition"
+
+    - order: 2
+      action: "檢查是否有 unique index"
+      tools:
+        - "Bash"
+      command: |
+        rails runner '
+          ActiveRecord::Base.connection
+            .indexes(:invoices)
+            .select { |i| i.unique }
+            .map { |i| [i.name, i.columns] }
+        '
+      expected: "應該要有 invoice_number + 相關欄位的 unique index"
+
+    - order: 3
+      action: "檢查 Use Case 是否有併發控制"
+      tools:
+        - "Grep"
+      pattern: "lock!|with_lock|pessimistic|optimistic|lock_version"
+      target: "domains/**/use_cases/*invoice*.rb"
+      expected: "應該要有 lock! 或 transaction isolation"
+
+    - order: 4
+      action: "檢查 Sidekiq Worker 的冪等性"
+      tools:
+        - "Read"
+      target: "對應的 Worker 檔案"
+      look_for: "是否有檢查「已處理過」的邏輯"
+
+    - order: 5
+      action: "檢查前端是否有防重複點擊"
+      tools:
+        - "Grep"
+      pattern: "disabled|loading|debounce|throttle"
+      target: "前端對應的按鈕元件"
+      expected: "應該要有 loading state 防止重複點擊"
+
+  anti_patterns:
+    - "不要只加 unique validation（Ruby 層），這無法防止 race condition"
+    - "不要只依賴 Sidekiq 的 unique job gem，仍需要資料庫層保護"
+    - "不要在 transaction 外檢查再寫入，檢查和寫入之間可能被插入"
+
+root_cause:
+  summary: "缺乏資料庫層級的併發控制，導致多個請求同時通過驗證並寫入"
+  detailed_explanation: |
+    發票重複通常發生在以下情況：
+
+    1. **Race Condition 時序問題**
+       ```
+       Request A: 檢查發票不存在 ✓ → 準備寫入...
+       Request B: 檢查發票不存在 ✓ → 準備寫入...
+       Request A: 寫入發票 ✓
+       Request B: 寫入發票 ✓  ← 重複了！
+       ```
+
+    2. **常見觸發場景**
+       - 用戶快速雙擊按鈕
+       - Sidekiq Worker timeout 後重試
+       - 外部 API callback 重複呼叫
+       - 前端網路問題導致重送
+
+    3. **為什麼 Ruby 層 validation 不夠**
+       - validates :invoice_number, uniqueness: true
+       - 這只在 Ruby 層檢查，無法防止並行寫入
+       - 兩個請求可能同時通過檢查
+
+  affected_components:
+    - "Use Case（缺乏 lock）"
+    - "Database（缺乏 unique index）"
+    - "Worker（缺乏冪等性檢查）"
+    - "Frontend（缺乏 loading state）"
+
+solution:
+  quick_fix:
+    description: "加入資料庫 unique index（最快生效）"
+    code: |
+      # Migration
+      class AddUniqueIndexToInvoices < ActiveRecord::Migration[7.0]
+        def change
+          add_index :invoices, [:receivable_id, :invoice_number],
+                    unique: true,
+                    name: 'idx_invoices_unique_number_per_receivable'
+        end
+      end
+    warnings:
+      - "如果已有重複資料，migration 會失敗"
+      - "需要先清理重複資料"
+      - "這只能防止未來重複，需配合程式碼修改處理 exception"
+
+  proper_fix:
+    description: "多層防護：資料庫 + Use Case 鎖定 + 前端"
+    steps:
+      - step: 1
+        description: "資料庫層：加入 unique index"
+        code: |
+          add_index :invoices, [:receivable_id, :invoice_number], unique: true
+        file: "db/migrate/xxx_add_unique_index_to_invoices.rb"
+
+      - step: 2
+        description: "Use Case 層：加入悲觀鎖定"
+        code: |
+          def call(serial:, invoice_params:, current_user:)
+            receivable = find_receivable(serial)
+
+            # 悲觀鎖定，確保同一時間只有一個請求可以處理
+            receivable.with_lock do
+              yield validate_no_existing_invoice(receivable)
+              yield create_invoice(receivable, invoice_params)
+            end
+          end
+        file: "domains/**/use_cases/create_invoice.rb"
+
+      - step: 3
+        description: "Worker 層：加入冪等性檢查"
+        code: |
+          def perform(receivable_id)
+            receivable = Receivable.find(receivable_id)
+
+            # 冪等性檢查：如果已有發票就跳過
+            return if receivable.invoice.present?
+
+            CreateInvoice.new.call(receivable: receivable)
+          end
+        file: "app/workers/create_invoice_worker.rb"
+
+      - step: 4
+        description: "前端層：防止重複點擊"
+        code: |
+          const [isLoading, setIsLoading] = useState(false);
+
+          const handleSubmit = async () => {
+            if (isLoading) return;  // 防止重複點擊
+            setIsLoading(true);
+            try {
+              await createInvoice();
+            } finally {
+              setIsLoading(false);
+            }
+          };
+
+          <Button disabled={isLoading} onClick={handleSubmit}>
+            {isLoading ? '處理中...' : '開立發票'}
+          </Button>
+        file: "前端按鈕元件"
+
+  verification:
+    - "確認 unique index 存在：rails runner 'ActiveRecord::Base.connection.indexes(:invoices)'"
+    - "確認 Use Case 有 with_lock 或 lock!"
+    - "手動測試：快速雙擊按鈕，應只產生一張發票"
+    - "測試 Worker 重試：不應產生重複發票"
+  test_command: "rspec spec/domains/**/use_cases/*invoice*_spec.rb"
+
+references:
+  - type: "documentation"
+    title: "Rails Pessimistic Locking"
+    url: "https://api.rubyonrails.org/classes/ActiveRecord/Locking/Pessimistic.html"
+
+  - type: "article"
+    title: "Handling Race Conditions in Rails"
+    url: "https://blog.appsignal.com/2021/09/22/database-locking-in-rails.html"
+
+  - type: "internal"
+    title: "應收帳款手動開立發票（含併發修復）"
+    path: "tasks/sf_project/completed/f4fc5ef9-f15d-42c3-a504-6c03987ac0e2.json"
+
+history:
+  - date: "2025-12-31"
+    project: "sf_project"
+    task_id: "f4fc5ef9-f15d-42c3-a504-6c03987ac0e2"
+    notes: "手動開立發票功能，加入悲觀鎖定解決 Race Condition"
+
+  - date: "2025-12-26"
+    project: "sf_project"
+    task_id: "ca8cb341-b653-41f6-9798-f58e3d3d3e00"
+    notes: "發票作廢功能，修復併發控制不足問題"
+
+  - date: "2026-01-26"
+    project: "core_web"
+    task_id: "61227dfe-6146-4e59-a0d9-ec21224cd2c0"
+    notes: "電費單發票重複問題（待調查）"

@@ -1,0 +1,285 @@
+# Business Rule Entry Schema
+# 業務規則條目 Schema
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: "Business Rule Entry"
+description: |
+  Schema for business-rules.md rule entries.
+  業務規則是系統必須強制執行的不變式。
+
+type: object
+
+required:
+  - id
+  - category
+  - domain
+  - description
+
+properties:
+  id:
+    type: string
+    description: |
+      規則 ID 格式：{類別縮寫}-{三位數字}
+
+      類別縮寫：
+      - VR: Validation Rules（資料驗證規則）
+      - CR: Constraint Rules（約束條件規則）
+      - ST: State Transition Rules（狀態轉換規則）
+      - CA: Calculation Rules（計算規則）
+      - AU: Authorization Rules（授權規則）
+      - TE: Temporal Rules（時間規則）
+      - CD: Cross-Domain Rules（跨領域規則）
+    pattern: "^(VR|CR|ST|CA|AU|TE|CD)-\\d{3}$"
+    examples:
+      - "VR-001"
+      - "ST-023"
+      - "CD-001"
+
+  category:
+    type: string
+    description: "規則類別"
+    enum:
+      - validation        # 資料驗證
+      - constraint        # 約束條件
+      - state_transition  # 狀態轉換
+      - calculation       # 計算規則
+      - authorization     # 授權規則
+      - temporal          # 時間規則
+      - cross_domain      # 跨領域規則
+
+  name:
+    type: string
+    description: "規則名稱（簡短描述）"
+    examples:
+      - "ProjectFund Amount Must Be Positive"
+      - "Approver Cannot Approve Own Request"
+
+  domain:
+    type: string
+    description: "主要所屬 Domain"
+    examples:
+      - "ProjectFund"
+      - "Approval"
+
+  relatedDomains:
+    type: array
+    items:
+      type: string
+    description: "相關的其他 Domain（跨域規則時使用）"
+    examples:
+      - ["Invoice", "Payment"]
+
+  description:
+    type: string
+    description: "規則的完整描述"
+    minLength: 20
+    examples:
+      - "專案基金金額必須為正數，不允許零或負數金額。"
+
+  condition:
+    type: string
+    description: "此規則適用的條件（When）"
+    examples:
+      - "When creating or updating ProjectFund amount"
+
+  logic:
+    type: string
+    description: |
+      實作邏輯（虛擬碼或實際程式碼）
+    examples:
+      - |
+        if (amount <= 0) {
+          throw ValidationError("金額必須為正數");
+        }
+
+  errorMessage:
+    type: string
+    description: "使用者看到的錯誤訊息"
+    examples:
+      - "金額必須為正數"
+      - "您不能審核自己提交的申請"
+
+  enforcement:
+    type: object
+    description: "規則的強制執行位置"
+    properties:
+      database:
+        type: string
+        description: "資料庫層級約束"
+        examples:
+          - "CHECK (amount > 0)"
+          - "UNIQUE (email)"
+      application:
+        type: string
+        description: "應用程式層級強制執行"
+        examples:
+          - "ProjectFund#validate_amount"
+          - "ApprovalService#validate_approver"
+
+  # 狀態轉換規則專用
+  stateTransition:
+    type: object
+    description: "狀態轉換規則的詳細定義（ST-xxx 專用）"
+    properties:
+      entity:
+        type: string
+        description: "狀態所屬的 Entity"
+      states:
+        type: array
+        items:
+          type: string
+        description: "所有可能的狀態"
+      transitions:
+        type: array
+        items:
+          type: object
+          properties:
+            from:
+              type: string
+            to:
+              type: string
+            condition:
+              type: string
+            triggeredBy:
+              type: string
+            sideEffects:
+              type: array
+              items:
+                type: string
+      forbiddenTransitions:
+        type: array
+        items:
+          type: object
+          properties:
+            from:
+              type: string
+            to:
+              type: string
+            reason:
+              type: string
+
+  # 計算規則專用
+  calculation:
+    type: object
+    description: "計算規則的詳細定義（CA-xxx 專用）"
+    properties:
+      formula:
+        type: string
+        description: "計算公式"
+      inputs:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            type:
+              type: string
+            constraints:
+              type: string
+      output:
+        type: object
+        properties:
+          name:
+            type: string
+          type:
+            type: string
+      precision:
+        type: string
+        description: "精確度和捨入規則"
+      edgeCases:
+        type: array
+        items:
+          type: string
+
+  testCoverage:
+    type: object
+    description: "測試覆蓋狀態"
+    properties:
+      positive:
+        type: boolean
+        description: "正向測試（有效輸入）"
+      negative:
+        type: boolean
+        description: "負向測試（無效輸入）"
+      edge:
+        type: boolean
+        description: "邊界測試"
+
+  examples:
+    type: object
+    description: "範例"
+    properties:
+      valid:
+        type: array
+        items:
+          type: string
+        description: "有效的範例"
+      invalid:
+        type: array
+        items:
+          type: string
+        description: "無效的範例（含錯誤訊息）"
+
+  relatedRules:
+    type: array
+    items:
+      type: string
+      pattern: "^(VR|CR|ST|CA|AU|TE|CD)-\\d{3}$"
+    description: "相關規則的 ID"
+
+# Markdown 格式範本（依類別略有不同）
+markdownTemplates:
+  validation: |
+    #### Rule: {name}
+    **ID**: `{id}`
+    **Domain**: {domain}
+    **Description**: {description}
+
+    **Condition**: {condition}
+
+    **Validation Logic**:
+    ```ruby
+    {logic}
+    ```
+
+    **Error Message**: "{errorMessage}"
+
+    **Enforcement Location**:
+    - Database: {enforcement.database}
+    - Application: {enforcement.application}
+
+    **Test Coverage**:
+    - [x] Positive case
+    - [x] Negative case
+    - [ ] Edge cases
+
+    **Examples**:
+    ```
+    ✅ Valid: {examples.valid}
+    ❌ Invalid: {examples.invalid}
+    ```
+
+    **Related Rules**: {relatedRules}
+
+  state_transition: |
+    #### Rule: {entity} State Transitions
+    **ID**: `{id}`
+    **Domain**: {domain}
+    **Entity**: {stateTransition.entity}
+
+    **States**: {stateTransition.states}
+
+    **Valid Transitions**:
+    ```mermaid
+    graph LR
+        {mermaid_diagram}
+    ```
+
+    **Transition Rules**:
+    | From State | To State | Condition | Triggered By | Side Effects |
+    |------------|----------|-----------|--------------|--------------|
+    {transition_table}
+
+    **Forbidden Transitions**:
+    {forbidden_list}

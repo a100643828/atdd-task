@@ -1,0 +1,184 @@
+# Acceptance Fixture Template
+#
+# 用途：定義 E2E 測試的驗收步驟
+# 使用者：Tester 生成、Coder 執行（Chrome MCP）、Gatekeeper 呈現
+#
+# 複製此檔案到：acceptance/fixtures/{project_id}/{task_id}.yml
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 基本資訊
+# ═══════════════════════════════════════════════════════════════════════════════
+id: "{task_id}"
+taskId: "{task_id}"
+description: "{task_description}"
+profile: "{acceptance_profile}"
+createdAt: "{ISO_timestamp}"
+createdBy: "tester"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 環境配置
+# ═══════════════════════════════════════════════════════════════════════════════
+environment:
+  target: "local"                    # local | staging | production
+  baseUrl: "http://localhost:3000"
+  credentials:
+    email: "test@example.com"
+    password: "password"
+    # 或使用環境變數
+    # email: "${TEST_USER_EMAIL}"
+    # password: "${TEST_USER_PASSWORD}"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 資料準備
+# ═══════════════════════════════════════════════════════════════════════════════
+setup:
+  # 執行腳本
+  script:
+    path: "db/seeds/acceptance/{task_id}_setup.rb"
+    command: "cd {project_path} && rails runner {path}"
+
+  # 預期建立的資料（供參考）
+  creates:
+    - entity: "EntityName"
+      identifier:
+        field: "value"
+      attributes:
+        attr1: "value1"
+        attr2: "value2"
+
+  # 輸出變數（供後續步驟使用）
+  outputs:
+    - name: "variable_name"
+      description: "說明"
+      value: "預設值或參照"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 驗收步驟
+# ═══════════════════════════════════════════════════════════════════════════════
+# 對應 Given-When-Then 的 When 部分
+# Coder 使用 Chrome MCP 依序執行這些步驟
+
+steps:
+  - id: 1
+    description: "步驟描述"
+
+    # 動作類型：navigate | click | input | type | wait | scroll | screenshot
+    action:
+      type: "navigate"
+      target: "/path/to/page"
+      # 或
+      # type: "click"
+      # selector: "button.submit"
+      # 或
+      # type: "input"
+      # selector: "input[name='email']"
+      # value: "{credentials.email}"
+
+    # 預期結果（用於驗證）
+    expected:
+      type: "text_visible"           # text_visible | element_exists | url_contains | value_equals
+      selector: ".success-message"
+      contains: "成功"
+
+    # 是否截圖
+    screenshot: true
+    screenshotName: "01_step_name.png"
+
+  - id: 2
+    description: "登入系統"
+    action:
+      type: "navigate"
+      target: "/login"
+    expected:
+      type: "element_exists"
+      selector: "form.login"
+    screenshot: true
+    screenshotName: "02_login_page.png"
+
+  - id: 3
+    description: "輸入帳號密碼"
+    actions:                         # 多個動作可用 actions（複數）
+      - type: "input"
+        selector: "input[name='email']"
+        value: "{credentials.email}"
+      - type: "input"
+        selector: "input[name='password']"
+        value: "{credentials.password}"
+      - type: "click"
+        selector: "button[type='submit']"
+    expected:
+      type: "url_contains"
+      value: "/dashboard"
+    screenshot: true
+    screenshotName: "03_after_login.png"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 預期結果
+# ═══════════════════════════════════════════════════════════════════════════════
+# 對應 Given-When-Then 的 Then 部分
+# 驗收標準，用於確認功能是否正確
+
+expectedResults:
+  - id: 1
+    description: "描述預期結果"
+    verification:
+      type: "visual"                 # visual | database | api | manual
+      selector: ".element"
+      assertion: "contains"          # contains | equals | exists | not_exists
+      value: "預期值"
+
+  - id: 2
+    description: "資料庫狀態驗證"
+    verification:
+      type: "database"
+      query: "SELECT status FROM table WHERE id = {id}"
+      expected: "expected_value"
+
+  - id: 3
+    description: "需人工確認的項目"
+    verification:
+      type: "manual"
+      instruction: "請確認畫面顯示正確"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 清理
+# ═══════════════════════════════════════════════════════════════════════════════
+teardown:
+  script:
+    path: "db/seeds/acceptance/{task_id}_cleanup.rb"
+    command: "cd {project_path} && rails runner {path}"
+
+  # 預期刪除的資料
+  deletes:
+    - entity: "EntityName"
+      identifier:
+        field: "value"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 測試產出（Coder 執行後填入）
+# ═══════════════════════════════════════════════════════════════════════════════
+artifacts:
+  recording: null                    # recordings/{task_id}/e2e.gif
+  screenshots: []                    # recordings/{task_id}/screenshots/
+  executedAt: null                   # ISO timestamp
+  executedBy: null                   # coder
+  duration: null                     # 執行時間
+  status: null                       # passed | failed
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Chrome MCP 工具對照
+# ═══════════════════════════════════════════════════════════════════════════════
+# 供 Coder 參考的工具對照表
+#
+# | Action Type | Chrome MCP Tool                              |
+# |-------------|----------------------------------------------|
+# | navigate    | mcp__claude-in-chrome__navigate              |
+# | click       | mcp__claude-in-chrome__computer (left_click) |
+# | input       | mcp__claude-in-chrome__form_input            |
+# | type        | mcp__claude-in-chrome__computer (type)       |
+# | wait        | mcp__claude-in-chrome__computer (wait)       |
+# | scroll      | mcp__claude-in-chrome__computer (scroll)     |
+# | screenshot  | mcp__claude-in-chrome__computer (screenshot) |
+# | find        | mcp__claude-in-chrome__find                  |
+# | read        | mcp__claude-in-chrome__read_page             |
+# | execute_js  | mcp__claude-in-chrome__javascript_tool       |

@@ -1,0 +1,297 @@
+# Knowledge Confidence Assessment
+# 知識信心度評估
+# Curator Agent 用於評估 domain 知識是否足夠完整、正確，可安全寫入
+#
+# 計算方式：total = sum(dimension.weight * dimension.score / 100)
+# 滿分 100，各維度 score 為 0~100
+
+version: "2.0"
+
+type: knowledge
+agent: curator
+
+# Data Sources
+# Curator 評估信心度時必須參考的資料
+data_sources:
+  required:
+    - path: "domains/{project}/ul.md"
+      purpose: "術語定義完整性、類型分類、交叉引用"
+    - path: "domains/{project}/business-rules.md"
+      purpose: "商務規則覆蓋度（VR/ST/CA/AU/CD）"
+    - path: "domains/{project}/domain-map.md"
+      purpose: "跨域關係、Context Mapping、邊界定義"
+    - path: "domains/{project}/strategic/{Domain}.md"
+      purpose: "商務邏輯、能力定義、範疇（Includes/Excludes）、狀態流程"
+  conditional:
+    - path: "domains/{project}/tactical/{Domain}.md"
+      purpose: "系統設計決策、已知 Pitfalls、Knowledge Gaps"
+      when: "identified domain has tactical document"
+    - path: "domains/{project}/contexts/{Domain}.md"
+      purpose: "Bounded Context 邊界（舊格式 fallback）"
+      when: "domain has not been migrated to strategic/tactical structure"
+  excluded:
+    - path: "codebase (app/, db/, config/)"
+      reason: "code-knowledge 一致性是 review/gate 階段的責任，不是 curator 的責任。Curator 從業務對話取得知識，不從程式碼推導。"
+
+# Thresholds
+# 雙重門檻：結構信心度（Phase 2）和內容信心度（Phase 4）使用同一套維度
+thresholds:
+  structure_proceed: 70     # >= 70% 結構足夠清楚，可進入 Phase 3 撰寫提案
+  content_commit: 95        # >= 95% 內容已充分驗證，可進入 Phase 5 寫入
+
+  interpretation:
+    95_100: "內容已充分驗證，可安全寫入知識庫"
+    80_94: "大部分正確，仍有項目需用戶確認"
+    70_79: "結構明確但內容不確定，可撰寫提案但需驗證"
+    50_69: "有顯著缺口，需要結構補正"
+    0_49: "嚴重不足，需要大量補正"
+
+# Dimensions
+dimensions:
+  terminology_completeness:
+    name: "術語完整度"
+    weight: 10
+    description: |
+      評估 ul.md 中術語定義的完整性。
+      所有涉及的 Entity、Value Object、Aggregate 是否都有定義，
+      定義是否包含類型分類、中英對照、範例、交叉引用。
+    rationale: |
+      Ubiquitous Language 是 DDD 的根基。術語不完整會導致
+      後續溝通出現歧義，但相比規則和邊界，術語相對容易補充，
+      因此權重較低。
+    sources:
+      - "ul.md (所有術語定義)"
+      - "strategic/{Domain}.md (使用到的術語)"
+    deductions:
+      - id: TE-1
+        points: -15
+        cause: "核心 Entity/Aggregate 完全缺少 ul.md 定義"
+      - id: TE-2
+        points: -10
+        cause: "術語有定義但缺少類型分類（Entity/VO/Aggregate/Service）"
+      - id: TE-3
+        points: -8
+        cause: "術語缺少具體範例或中英對照"
+      - id: TE-4
+        points: -5
+        cause: "相關術語缺少交叉引用（如 Parent ↔ Child 關係）"
+
+  rule_coverage:
+    name: "規則覆蓋度"
+    weight: 25
+    description: |
+      評估 business-rules.md 中規則的覆蓋程度。
+      每個 Domain 應有完整的驗證規則（VR）、狀態轉換（ST）、
+      計算規則（CA）、授權規則（AU）、跨域連鎖規則（CD）。
+    rationale: |
+      商務規則是知識的核心價值。規則不完整直接影響 specist 寫規格、
+      tester 寫測試、coder 寫實作，是所有下游 agent 最依賴的知識。
+      給予最高權重。
+    sources:
+      - "business-rules.md (VR/ST/CA/AU/CD 規則)"
+      - "strategic/{Domain}.md (商務規則、狀態流程)"
+      - "domain-map.md (跨域關係，用於比對 CD 規則覆蓋度)"
+    deductions:
+      - id: RC-1
+        points: -25
+        cause: "核心驗證規則（VR）完全未定義"
+      - id: RC-2
+        points: -20
+        cause: "狀態轉換規則（ST）缺失，不知道狀態機如何運作"
+      - id: RC-3
+        points: -15
+        cause: "計算規則（CA）缺少公式或計算邏輯"
+      - id: RC-4
+        points: -10
+        cause: "規則存在但缺少關鍵條件或例外處理"
+      - id: RC-5
+        points: -5
+        cause: "規則大致完整但有個別條件待確認"
+      - id: RC-6
+        points: -8
+        cause: "跨域連鎖規則（CD）未識別（domain-map 有跨域關係但 business-rules 無對應 CD 規則）"
+
+  boundary_clarity:
+    name: "領域邊界清晰度"
+    weight: 15
+    description: |
+      評估 Domain 邊界的明確程度。
+      包含 Domain 責任範圍（Includes/Excludes）、與其他 Domain 的關係、
+      整合點是否有文件。
+    rationale: |
+      邊界錯誤是 DDD 中代價最高的錯誤。劃錯邊界會導致整個模組設計方向錯誤，
+      後期修正成本極高。但相比規則，邊界通常在初期就能確認。
+    sources:
+      - "domain-map.md (Context Mapping、Domain 列表)"
+      - "strategic/{Domain}.md (範疇定義: Includes/Excludes)"
+      - "contexts/{Domain}.md (Bounded Context 邊界，fallback)"
+    deductions:
+      - id: BC-1
+        points: -20
+        cause: "Domain 責任完全不明確（不知道 Includes/Excludes）"
+      - id: BC-2
+        points: -15
+        cause: "與其他 Domain 的關係未定義（Context Mapping 缺失）"
+      - id: BC-3
+        points: -10
+        cause: "整合點（Sync API / Async Events）未文件化"
+      - id: BC-4
+        points: -5
+        cause: "邊界大致清楚但有個別灰色地帶"
+
+  object_model_clarity:
+    name: "物件模型清晰度"
+    weight: 15
+    description: |
+      評估 Domain 的核心物件是否已識別、關係是否清楚、
+      商務邏輯歸屬是否明確。
+      不關心實作模式（Aggregate/UseCase/ViewObject），
+      只關心「商務上有哪些概念、彼此什麼關係、邏輯歸誰管」。
+    rationale: |
+      物件模型是 coder 實作的起點。Curator 不決定實作方式，
+      但必須讓 coder 知道商務邏輯應該歸屬哪個概念，
+      避免邏輯散落或重複。
+    sources:
+      - "ul.md (術語的類型分類)"
+      - "strategic/{Domain}.md (商務能力對應的概念)"
+    deductions:
+      - id: OM-1
+        points: -15
+        cause: "核心概念未識別（不知道這個 Domain 有哪些商務概念）"
+      - id: OM-2
+        points: -10
+        cause: "概念之間的關係未記錄（不知道誰擁有誰、如何關聯）"
+      - id: OM-3
+        points: -8
+        cause: "商務邏輯歸屬不明（不知道某條規則應該跟著哪個概念走）"
+      - id: OM-4
+        points: -5
+        cause: "模型大致清楚但有個別關聯待確認"
+
+  cross_document_consistency:
+    name: "跨文件一致性"
+    weight: 15
+    description: |
+      檢查各知識文件之間的一致性。
+      同一概念在 ul.md、business-rules.md、strategic/*.md 的描述應一致，
+      狀態機描述與規則定義不能矛盾。
+    rationale: |
+      矛盾的知識比缺失的知識更危險。缺失只是不知道，矛盾會導致
+      不同 agent 做出相反的決策。早期發現矛盾能避免後期大量返工。
+    sources:
+      - "ul.md ↔ strategic/{Domain}.md (術語定義一致性)"
+      - "business-rules.md ↔ strategic/{Domain}.md (規則與狀態機一致性)"
+      - "domain-map.md ↔ strategic/{Domain}.md (邊界描述一致性)"
+    deductions:
+      - id: CO-1
+        points: -15
+        cause: "發現直接矛盾（同一概念在不同文件描述相反）"
+      - id: CO-2
+        points: -10
+        cause: "術語定義在 ul.md 與 strategic/tactical 文件中不一致"
+      - id: CO-3
+        points: -8
+        cause: "狀態機描述與規則定義不匹配"
+      - id: CO-4
+        points: -5
+        cause: "細微不一致（措辭不同但意思可能相同，需確認）"
+
+  actionability:
+    name: "知識可操作性"
+    weight: 10
+    description: |
+      評估知識是否能被下游 Agent 直接使用。
+      specist 能否據此寫驗收條件、coder 能否據此實作、
+      tester 能否據此設計測試。
+    rationale: |
+      知識的最終目的是驅動開發流程。再完整的知識，如果過於抽象
+      無法轉化為具體行動，對 ATDD 流程的價值就打折扣。
+      權重最低因為這通常是其他維度不足的衍生問題。
+    sources:
+      - "strategic/{Domain}.md (商務規則是否有具體數值)"
+      - "business-rules.md (規則是否可直接驗證)"
+      - "ul.md (定義是否足夠具體)"
+    deductions:
+      - id: AC-1
+        points: -10
+        cause: "知識過於抽象，specist 無法據此寫出任何驗收場景"
+      - id: AC-2
+        points: -8
+        cause: "規則缺少具體數值或閾值（如「金額要合理」但未定義合理範圍）"
+      - id: AC-3
+        points: -5
+        cause: "知識基本可用但有個別模糊之處，需要推測才能操作"
+
+  document_structure:
+    name: "文件結構完整度"
+    weight: 10
+    description: |
+      評估 strategic/tactical 文件是否具備必要區塊。
+      文件存在但缺少關鍵區塊，代表知識有結構性缺口。
+    rationale: |
+      其他維度檢查知識「內容」的品質，此維度檢查「結構」是否齊全。
+      strategic 文件缺少商務目的，即使規則齊全也不知道 Domain 存在的理由；
+      Knowledge Gaps 未記錄，代表不知道自己不知道什麼，風險無法評估。
+    sources:
+      - "strategic/{Domain}.md (各區塊存在性)"
+      - "tactical/{Domain}.md (Knowledge Gaps 區塊)"
+    deductions:
+      - id: DS-1
+        points: -10
+        cause: "strategic/{Domain}.md 不存在（核心知識文件缺失）"
+      - id: DS-2
+        points: -8
+        cause: "商務目的未記錄（不知道此 Domain 為什麼存在、解決什麼問題）"
+      - id: DS-3
+        points: -5
+        cause: "商務能力未列舉（不知道此 Domain 提供哪些能力）"
+      - id: DS-4
+        points: -5
+        cause: "Knowledge Gaps 未記錄（不知道還有哪些已知的未知）"
+
+# Clarification Prompt Template
+clarification_template: |
+  📊 知識信心度：{total_score}%（{phase_label}）
+
+  | 維度 | 得分 | 權重 | 加權分 | 主要扣分 |
+  |------|------|------|--------|----------|
+  | 術語完整度 | {terminology_completeness}% | 10% | {weighted_1} | {deduction_1} |
+  | 規則覆蓋度 | {rule_coverage}% | 25% | {weighted_2} | {deduction_2} |
+  | 領域邊界清晰度 | {boundary_clarity}% | 15% | {weighted_3} | {deduction_3} |
+  | 物件模型清晰度 | {object_model_clarity}% | 15% | {weighted_4} | {deduction_4} |
+  | 跨文件一致性 | {cross_document_consistency}% | 15% | {weighted_5} | {deduction_5} |
+  | 知識可操作性 | {actionability}% | 10% | {weighted_6} | {deduction_6} |
+  | 文件結構完整度 | {document_structure}% | 10% | {weighted_7} | {deduction_7} |
+
+  ⚠️ Knowledge Gaps:
+  1. {gap_from_highest_deduction_dimension}
+  2. {gap_from_second_highest}
+
+  ❌ 矛盾發現:
+  {conflicts_if_any}
+
+# Example
+example: |
+  知識盤點：SolarProject Domain（core_web 專案）
+
+  初始分析：
+  - terminology_completeness: 80% (TE-3: SolarProject 缺少具體範例)
+  - rule_coverage: 52% (RC-2: 案場狀態機未定義, RC-6: 與 Accounting 的 CD 規則未識別)
+  - boundary_clarity: 70% (BC-3: 與 Accounting Domain 的整合點未文件化)
+  - object_model_clarity: 70% (OM-2: SolarProject 與 Contract 的關係未記錄)
+  - cross_document_consistency: 85% (CO-4: ul.md 用「案場」但 strategic 用「太陽能專案」)
+  - actionability: 90% (AC-3: 租金計算的小數點進位規則未明確)
+  - document_structure: 85% (DS-3: 商務能力未列舉)
+
+  加權總分：
+  80*0.10 + 52*0.25 + 70*0.15 + 70*0.15 + 85*0.15 + 90*0.10 + 85*0.10
+  = 8 + 13 + 10.5 + 10.5 + 12.75 + 9 + 8.5
+  = 72.25%
+
+  結構信心度 72.25% >= 70%，可進入 Phase 3 撰寫提案。
+  但內容信心度 72.25% < 95%，需要在 Phase 4 逐項驗證。
+
+  Knowledge Gaps:
+  1. 案場狀態機完全未定義，不知道從「規劃中」到「運營中」經過哪些狀態 (rule_coverage)
+  2. 與 Accounting 的跨域連鎖規則未識別（domain-map 有關係但無 CD 規則）(rule_coverage)
+  3. SolarProject 與 Contract 的關係未記錄 (object_model_clarity)

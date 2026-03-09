@@ -1,0 +1,224 @@
+# 任務狀態更新（事件驅動）
+
+> 統一的狀態更新入口。所有命令透過觸發事件來更新任務狀態，由本模組統一處理所有副作用。
+
+---
+
+## Event 1: `stage-changed`
+
+**觸發時機**：`/continue` 階段轉移時
+
+**輸入**：
+- task JSON path
+- from_stage（原階段）
+- to_stage（目標階段）
+- agent_name（下一階段的 Agent）
+
+**副作用**：
+
+### 1. 更新 Task JSON
+
+```json
+{
+  "status": "{to_stage}",
+  "workflow": {
+    ...existing_workflow,
+    "currentAgent": "{agent_name}"
+  },
+  "history": [
+    ...existing_history,
+    { "phase": "{to_stage}", "timestamp": "{ISO timestamp}", "from": "{from_stage}" }
+  ],
+  "updatedAt": "{ISO timestamp}"
+}
+```
+
+### 2. 更新 Kanban
+
+檢查任務 JSON 的 `jira.issueKey`：
+- **不為 null** → `KANBAN_BACKEND=jira`
+- **為 null** → `KANBAN_BACKEND=markdown`
+
+```bash
+bash .claude/scripts/kanban-adapter.sh move \
+  --project {project} \
+  --title "{description}" \
+  --from {from_stage} \
+  --to {to_stage}
+```
+
+### 3. 描述更新（條件式：進入 testing 且非 test 類型）
+
+當 `to_stage == testing` 且任務 `type != test` 時，額外執行「更新描述」。
+
+詳細步驟：
+
+1. 從任務 JSON 取得 `id`（UUID 前 8 碼）和 `projectId`
+2. 用 UUID 前綴 glob 找到相關檔案：
+   - BA 報告：`requirements/{projectId}/{uuid前綴}*-ba.md`
+   - Requirement：`requirements/{projectId}/{uuid前綴}*.md`（排除 `-ba.md`）
+   - Spec：`specs/{projectId}/{uuid前綴}*.md`（fix 可能沒有 Spec）
+3. 依優先序擷取業務描述（見下方格式相容規則）
+4. 若有 Spec 檔案，從中擷取 `## Acceptance Criteria` 區塊
+5. 組合成描述文字，寫入暫存檔 `/tmp/jira-desc-{uuid}.md`
+6. 執行：
+
+```bash
+bash .claude/scripts/kanban-adapter.sh update \
+  --project {project} \
+  --title "{description}" \
+  --description-file /tmp/jira-desc-{uuid}.md
+```
+
+#### 格式相容規則（優先序）
+
+依以下順序嘗試擷取業務描述，使用第一個成功匹配的來源：
+
+**優先 1：標準 BA 報告**（`-ba.md` 檔案含 `## 需求摘要`）
+
+直接擷取三個區塊：
+- `## 需求摘要`
+- `## 業務分析結論`
+- `## 驗收條件`
+
+**優先 2：Requirement 檔案含 `## BA` 區塊**
+
+從 Requirement 檔的 `## BA` 區塊擷取內容，整區作為「業務分析結論」，並從 `## Request` 區塊擷取作為「需求摘要」。
+
+**優先 3：僅有 `## Request` / `## SA`**（舊格式，僅相容用途）
+
+從 `## Request` 擷取作為「需求摘要」，不產出「業務分析結論」和「驗收條件（BA）」區塊。
+
+> Request 區塊可能包含技術術語，擷取時**必須轉譯為業務語言**：移除 backtick、將 snake_case 名稱和 Class 名稱替換為中文業務用語。
+
+#### 組合格式
+
+```
+## 需求摘要
+{擷取的需求摘要內容}
+
+## 業務分析結論
+{擷取的業務分析結論，僅優先 1/2 有此區塊}
+
+## 驗收條件（BA）
+{擷取的驗收條件，僅優先 1 有此區塊}
+
+## Acceptance Criteria
+- [ ] AC-1: ...
+- [ ] AC-2: ...
+```
+
+空的區塊（無內容可擷取）應省略，不輸出空標題。
+
+---
+
+## Event 2: `task-completed`
+
+**觸發時機**：`/done` 或 `/close` 結案時
+
+**輸入**：
+- task JSON path
+- commit_hash（optional，`/close` 可能沒有）
+- metrics（optional，session 統計數據）
+
+**副作用**：
+
+### 1. 更新 Task JSON
+
+```json
+{
+  "status": "completed",
+  "history": [
+    ...existing_history,
+    { "phase": "completed", "timestamp": "{ISO timestamp}", "action": "{結案方式描述}" }
+  ],
+  "context": {
+    ...existing_context,
+    "completedAt": "{ISO timestamp}",
+    "commit": "{commit_hash 或 null}",
+    "closedWithoutCommit": {true if no commit_hash}
+  },
+  "metrics": "{metrics 如有提供}",
+  "updatedAt": "{ISO timestamp}"
+}
+```
+
+### 2. 移動檔案
+
+```bash
+mv tasks/{project}/active/{uuid}.json tasks/{project}/completed/
+```
+
+### 3. 更新 Kanban
+
+```bash
+# 先取得 metrics
+ruby .claude/scripts/session-stats.rb latest --format kanban > /tmp/kanban-metrics.txt
+
+# 結案
+bash .claude/scripts/kanban-adapter.sh complete \
+  --project {project} \
+  --title "{description}" \
+  --commit {commit_hash} \
+  --phase-history "{phase1} → {phase2} → ..." \
+  --task-id {task_id_prefix} \
+  --type {Feature/Fix/Refactor} \
+  --domain {domain} \
+  --branch {branch} \
+  --metrics-file /tmp/kanban-metrics.txt
+```
+
+### 4. Epic 同步（條件式）
+
+讀取任務 JSON 的 `epic` 字段：
+- **有 epic 字段** → 執行 `shared/epic-sync-on-complete.md`
+- **無 epic 字段** → 跳過
+
+輸入：
+- 任務 JSON（含 epic 字段）
+- commit hash（來自輸入，或 "N/A"）
+
+---
+
+## Event 3: `task-cancelled`
+
+**觸發時機**：`/abort` 放棄任務時
+
+**輸入**：
+- task JSON path
+- reason（放棄原因）
+
+**副作用**：
+
+### 1. 更新 Task JSON
+
+```json
+{
+  "status": "failed",
+  "history": [
+    ...existing_history,
+    { "phase": "failed", "timestamp": "{ISO timestamp}" }
+  ],
+  "context": {
+    ...existing_context,
+    "failureReason": "{reason}",
+    "abortedAt": "{當前階段}",
+    "abortedBy": "user"
+  },
+  "updatedAt": "{ISO timestamp}"
+}
+```
+
+### 2. 移動檔案
+
+```bash
+mv tasks/{project}/active/{uuid}.json tasks/{project}/failed/
+```
+
+### 3. 更新 Kanban
+
+```bash
+bash .claude/scripts/kanban-adapter.sh fail \
+  --project {project} \
+  --title "{description}"
+```

@@ -1,0 +1,141 @@
+# Ubiquitous Language Entry Schema
+# 術語條目 Schema
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: "Ubiquitous Language Entry"
+description: |
+  Schema for ul.md term entries.
+  每個術語條目必須遵循此結構，確保一致性。
+
+type: object
+
+required:
+  - term
+  - chinese
+  - definition
+  - type
+
+properties:
+  term:
+    type: string
+    description: |
+      English term name.
+      - Entity/Aggregate: PascalCase (e.g., ProjectFund, ErpPeriod)
+      - Service: PascalCase + Service (e.g., ApprovalService)
+      - Event: PascalCase + 過去式 (e.g., OrderSubmitted, InvoiceCreated)
+    pattern: "^[A-Z][a-zA-Z0-9]*$"
+    examples:
+      - "ProjectFund"
+      - "ErpPeriod"
+      - "InvoiceCreated"
+
+  chinese:
+    type: string
+    description: "中文名稱或翻譯"
+    examples:
+      - "專案基金"
+      - "ERP 週期"
+
+  definition:
+    type: string
+    description: |
+      Clear definition (1-3 sentences).
+      應該回答：這是什麼？做什麼用？
+    minLength: 20
+    maxLength: 500
+    examples:
+      - "代表一筆專案的資金配置，包含預算金額、已使用金額和剩餘額度。"
+
+  type:
+    type: string
+    description: |
+      DDD 術語類型分類：
+      - Entity: 有唯一識別碼，生命週期內可變
+      - ValueObject: 不可變，由屬性值定義相等性
+      - Aggregate: 一致性邊界內的 Entity 群組（含 Root）
+      - Service: 無狀態的領域操作
+      - Event: 領域中發生的重要事件
+      - Concept: 業務概念（非程式碼實體）
+    enum:
+      - Entity
+      - ValueObject
+      - Aggregate
+      - Service
+      - Event
+      - Concept
+
+  domain:
+    type: string
+    description: "此術語所屬的主要 Domain"
+    examples:
+      - "ProjectFund"
+      - "Accounting::AccountsReceivable"
+
+  aggregateRoot:
+    type: string
+    description: |
+      如果此術語是 Entity 或 ValueObject，
+      指明它屬於哪個 Aggregate Root。
+    examples:
+      - "ErpPeriod"
+      - "Order"
+
+  relatedEntities:
+    type: array
+    items:
+      type: string
+    description: "相關的程式碼組件（Model、Service、Controller）"
+    examples:
+      - ["ProjectFund", "ProjectFundService", "ProjectFundsController"]
+
+  businessRules:
+    type: array
+    items:
+      type: string
+      pattern: "^(VR|CR|ST|CA|AU|TE|CD)-\\d{3}$"
+    description: |
+      相關的業務規則 ID。
+      格式：{類別}-{三位數字}
+    examples:
+      - ["VR-001", "CR-023", "AU-042"]
+
+  examples:
+    type: array
+    items:
+      type: string
+    description: "具體使用範例"
+    examples:
+      - ["ProjectFund 金額為 100,000，已使用 30,000"]
+
+  notes:
+    type: array
+    items:
+      type: string
+    description: "重要注意事項、常見陷阱"
+    examples:
+      - ["金額必須為正數", "建立後不可刪除，只能作廢"]
+
+  relatedTerms:
+    type: array
+    items:
+      type: string
+    description: "相關術語的連結"
+    examples:
+      - ["Approval", "FundAmount", "Project"]
+
+# Markdown 格式範本
+markdownTemplate: |
+  ### {term}
+  **中文**: {chinese}
+  **定義**: {definition}
+  **類型**: {type}
+  **所屬 Aggregate**: {aggregateRoot}
+  **相關 Entity/Component**: {relatedEntities}
+  **業務規則**: {businessRules}
+  **範例**: {examples}
+
+  **注意事項**:
+  - {notes[0]}
+  - {notes[1]}
+
+  **相關詞彙**: {relatedTerms}

@@ -1,0 +1,110 @@
+# Test Run Record Template
+#
+# 用途：記錄單次測試執行結果
+# 位置：tests/{project_id}/suites/{suite_id}/runs/{timestamp}/run.yml
+#
+# 此檔案由 /test-run 自動生成，不需手動建立
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 執行識別
+# ═══════════════════════════════════════════════════════════════════════════════
+runId: "{timestamp}-{suite_id}"
+suiteId: "{suite_id}"
+testRunId: "run_{timestamp}_{random}"   # Tagged Data 標記用 ID
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 執行狀態
+# ═══════════════════════════════════════════════════════════════════════════════
+startedAt: "{ISO_timestamp}"
+completedAt: null
+status: "running"                       # running | passed | failed | aborted
+
+# 執行者資訊
+executor:
+  type: "chrome-mcp"                    # chrome-mcp | manual
+  agent: "tester"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 環境資訊
+# ═══════════════════════════════════════════════════════════════════════════════
+environment:
+  target: "local"
+  baseUrl: "http://localhost:3000"
+  gitBranch: null                       # 執行時的 Git 分支
+  gitCommit: null                       # 執行時的 Git commit
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Setup 執行結果
+# ═══════════════════════════════════════════════════════════════════════════════
+setup:
+  status: null                          # pending | completed | failed | skipped
+  preflightChecks: []
+  # 範例：
+  # - check: "server_running"
+  #   status: "passed"
+  #   actual: "ok"
+  #
+  seedScript:
+    status: null
+    recordsCreated: 0
+    duration: null
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 執行結果
+# ═══════════════════════════════════════════════════════════════════════════════
+results:
+  total: 0
+  passed: 0
+  failed: 0
+  skipped: 0
+  duration: null
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 場景執行結果
+# ═══════════════════════════════════════════════════════════════════════════════
+scenarios: []
+# 範例：
+# - id: "S1"
+#   title: "場景標題"
+#   status: "passed"                    # passed | failed | skipped
+#   startedAt: "ISO_timestamp"
+#   completedAt: "ISO_timestamp"
+#   duration: "45s"
+#   recording: "recordings/S1-scenario-name.gif"
+#   steps:
+#     - id: 1
+#       status: "passed"
+#       screenshot: "screenshots/S1-01.png"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 發現的問題
+# ═══════════════════════════════════════════════════════════════════════════════
+issues: []
+# 範例：
+# - id: "ISS-001"
+#   severity: "high"                    # critical | high | medium | low
+#   scenario: "S3"
+#   step: 5
+#   description: "按鈕無法點擊"
+#   screenshot: "screenshots/S3-05-error.png"
+#   fixTask: null                       # 關聯的 Fix 任務 ID
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Cleanup 執行結果
+# ═══════════════════════════════════════════════════════════════════════════════
+cleanup:
+  status: null                          # pending | completed | failed | skipped
+  recordsCleaned: 0
+  duration: null
+  error: null
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 錄製檔案
+# ═══════════════════════════════════════════════════════════════════════════════
+recordings:
+  directory: "recordings/"
+  files: []
+  # 範例：
+  # - scenario: "S1"
+  #   file: "S1-navigate-to-list.gif"
+  #   size: "2.5MB"

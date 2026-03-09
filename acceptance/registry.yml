@@ -1,0 +1,616 @@
+# Acceptance Registry
+# 驗收配置註冊表 - ATDD 導向
+#
+# 核心理念：
+# - ATDD 凌駕於 BDD/SDD/TDD 之上
+# - 每個功能/修復必須有一個測試直接反映「問題是否被解決」
+# - 驗收測試關注業務結果，不關注技術實作
+#
+# 用途：
+# - Specist: 根據驗收條件選擇 profile
+# - Tester: 根據 profile 生成對應層級的驗收測試
+# - Coder: 實作讓測試通過
+# - Gatekeeper: 確認驗收測試通過且反映需求
+
+version: "2.0"
+lastUpdated: "2026-01-19"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 核心原則
+# ═══════════════════════════════════════════════════════════════════════════════
+
+principles:
+  confidence:
+    threshold: 95
+    description: "信心度 ≥95% 才能進入下一階段，<95% 必須澄清"
+
+  acceptance:
+    - "每個 Feature/Fix 必須有至少一個驗收測試"
+    - "驗收測試必須直接反映「問題/需求是否被解決」"
+    - "驗收測試關注業務結果，不關注技術實作細節"
+    - "選擇最實際可行的驗證層級，不硬套 E2E"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Feature Profiles - 功能驗收類型（ATDD 導向）
+# ═══════════════════════════════════════════════════════════════════════════════
+# 根據「如何才能有效驗收」來分類，而非「功能類型」
+# 選擇依據：結果何時可見、是否需要模擬環境
+
+profiles:
+
+  # ---------------------------------------------------------------------------
+  # E2E - 端對端驗收（任務形態，atdd-hub 管理）
+  # ---------------------------------------------------------------------------
+  # 性質：單點驗收，驗證特定任務（Feature/Fix）的需求是否完成
+  # 存放：atdd-hub tests/ 或 acceptance/fixtures/
+  # 觸發：任務驗收時由 tester 手動/指令觸發
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: "端對端驗收"
+    description: "透過瀏覽器驗證完整用戶流程，結果即時可見。屬任務形態的單點驗收，由 atdd-hub 管理。"
+    executor: "chrome-mcp"
+
+    # 適用條件
+    when:
+      - "結果可在畫面即時看到"
+      - "等待時間 < 60 秒"
+      - "不需要時間操作（freeze/travel）"
+      - "不需要 Mock 外部服務"
+
+    # 不適用條件
+    notWhen:
+      - "結果需等待超過 1 分鐘"
+      - "依賴特定時間點（週結、月結）"
+      - "依賴外部服務回應且不穩定"
+      - "需要模擬併發/Race Condition"
+
+    # 驗收測試結構
+    testStructure:
+      format: "gherkin"
+      example: |
+        Feature: 用戶登入
+        Scenario: 使用正確帳密登入
+          Given 我在登入頁面
+          When 我輸入帳號「user@example.com」
+          And 我輸入密碼「password123」
+          And 我點擊登入按鈕
+          Then 我應該看到「歡迎回來」訊息
+          And 頁面應導向到「/dashboard」
+
+    # 執行方式
+    execution:
+      tool: "chrome-mcp"
+      recording: true
+      waitStrategy: "polling"
+      maxWait: 60
+
+    # 人類驗收
+    humanVerification:
+      method: "browser_walkthrough"
+      alternative: "觀看 E2E 測試錄影 (GIF)"
+
+  # ---------------------------------------------------------------------------
+  # Integration - 整合驗收（專案層級，CI/CD 回歸測試）
+  # ---------------------------------------------------------------------------
+  # 性質：防守型城牆，每次 CI/CD 自動觸發以卡控品質
+  # 存放：各專案 repo 內 spec/domains/**/integration/
+  # 觸發：CI/CD 自動觸發
+  # ---------------------------------------------------------------------------
+  integration:
+    name: "整合驗收"
+    description: "透過測試框架驗證跨元件/跨 Domain 的業務結果。屬專案層級的回歸測試（防守型城牆），存放在各專案 repo 內，由 CI/CD 自動觸發。"
+    executor: "rspec/jest"
+
+    # 適用條件
+    when:
+      - "結果需等待超過 1 分鐘"
+      - "需要時間操作（freeze/travel_to）"
+      - "需要 Mock 外部服務"
+      - "需要模擬併發/Race Condition"
+      - "跨多個 Domain 的資料流驗證"
+      - "背景作業/排程任務"
+
+    # 驗收測試結構
+    testStructure:
+      format: "rspec/jest"
+      example: |
+        # 範例：週結算排程（需要時間操作）
+        RSpec.describe "週結算排程" do
+          it "每週一計算上週收益並產生報表" do
+            project = create(:project, :with_revenue_data)
+
+            travel_to(Time.zone.parse("2024-01-15 00:00:00")) do
+              WeeklySettlementJob.perform_now
+            end
+
+            report = project.settlement_reports.last
+            expect(report.period).to eq("2024-01-08..2024-01-14")
+            expect(report.total_revenue).to eq(50000)
+          end
+        end
+
+    # 可用的測試輔助
+    testHelpers:
+      time:
+        - "travel_to(time)"      # 時間旅行
+        - "freeze_time"          # 時間凍結
+      mock:
+        - "stub_request"         # HTTP Mock
+        - "allow().to receive"   # Method Stub
+      async:
+        - "perform_enqueued_jobs"  # 執行排隊的 Job
+        - "Sidekiq::Testing.inline!"
+      concurrency:
+        - "Thread.new"           # 併發測試
+        - "Parallel.each"        # 平行執行
+
+    # 執行方式
+    execution:
+      ruby: "cd {project_path} && bundle exec rspec {test_file}"
+      javascript: "cd {project_path} && npm test -- {test_file}"
+      python: "cd {project_path} && pytest {test_file}"
+
+    # 人類驗收
+    humanVerification:
+      method: "review_test_cases"
+      description: "檢視測試案例確認業務場景覆蓋完整"
+
+  # ---------------------------------------------------------------------------
+  # Calculation - 計算/邏輯驗收（專案層級，CI/CD 回歸測試）
+  # ---------------------------------------------------------------------------
+  # 性質：防守型城牆，每次 CI/CD 自動觸發以卡控品質
+  # 存放：各專案 repo 內 spec/domains/**/
+  # 觸發：CI/CD 自動觸發
+  # ---------------------------------------------------------------------------
+  calculation:
+    name: "計算/邏輯驗收"
+    description: "驗證後端計算邏輯、業務規則，無 UI 互動。屬專案層級的回歸測試（防守型城牆），存放在各專案 repo 內，由 CI/CD 自動觸發。"
+    executor: "rspec/jest"
+
+    # 適用條件
+    when:
+      - "純後端邏輯變更"
+      - "計算公式或業務規則"
+      - "Entity/Service 方法變更"
+      - "無 UI 互動"
+      - "結果需透過 Console 或 API 驗證"
+
+    # 驗收測試結構
+    testStructure:
+      format: "rspec/jest"
+      example: |
+        # 範例：稅額計算
+        RSpec.describe TaxCalculator do
+          it "計算 5% 稅額" do
+            result = described_class.calculate(amount: 1000)
+            expect(result.tax).to eq(50)
+          end
+        end
+
+    # 執行方式
+    execution:
+      ruby: "cd {project_path} && bundle exec rspec {test_file}"
+
+    # 人類驗收 - 必須包含 Console 驗證指南
+    humanVerification:
+      method: "console_verification"
+      description: "透過 Rails Console 或 API 手動驗證"
+      required: true
+      template: |
+        ## 人工驗收指南
+
+        ### 方式 1：Rails Console 驗證
+
+        ```ruby
+        # 在 staging 環境的 Rails console 執行
+
+        # 1. 驗證 {scenario_1_title}
+        {console_code_1}
+
+        # 2. 驗證 {scenario_2_title}
+        {console_code_2}
+        ```
+
+        ### 方式 2：下次業務流程執行時驗證
+
+        等下次 {business_process} 時，檢查：
+        {verification_checklist}
+
+        ### 驗收檢查清單
+
+        | 項目 | 預期結果 | 驗證方式 |
+        |------|---------|---------|
+        {checklist_table}
+
+  # ---------------------------------------------------------------------------
+  # Unit - 單元驗收（專案層級，CI/CD 回歸測試）
+  # ---------------------------------------------------------------------------
+  # 性質：防守型城牆，每次 CI/CD 自動觸發以卡控品質
+  # 存放：各專案 repo 內 spec/domains/**/unit/
+  # 觸發：CI/CD 自動觸發
+  # ---------------------------------------------------------------------------
+  unit:
+    name: "單元驗收"
+    description: "驗證純邏輯計算、規則、演算法的正確性。屬專案層級的回歸測試（防守型城牆），存放在各專案 repo 內，由 CI/CD 自動觸發。"
+    executor: "rspec/jest"
+
+    # 適用條件
+    when:
+      - "純計算邏輯（公式、演算法）"
+      - "單一業務規則驗證"
+      - "Value Object 行為"
+      - "Domain Service 邏輯"
+      - "不涉及 I/O 或外部依賴"
+
+    # 驗收測試結構
+    testStructure:
+      format: "rspec/jest"
+      example: |
+        # 範例：電費計算規則
+        RSpec.describe ElectricityBillCalculator do
+          describe "#calculate_management_fee" do
+            it "計算 5% 管理費" do
+              calculator = described_class.new(amount: 10000)
+              expect(calculator.management_fee).to eq(500)
+            end
+
+            it "金額為 0 時管理費為 0" do
+              calculator = described_class.new(amount: 0)
+              expect(calculator.management_fee).to eq(0)
+            end
+          end
+        end
+
+    # 測試重點
+    focus:
+      - "公式正確性"
+      - "邊界值處理"
+      - "異常輸入處理"
+      - "精度驗證"
+
+    # 執行方式
+    execution:
+      ruby: "cd {project_path} && bundle exec rspec {test_file}"
+      javascript: "cd {project_path} && npm test -- {test_file}"
+      python: "cd {project_path} && pytest {test_file}"
+
+    # 人類驗收
+    humanVerification:
+      method: "review_test_cases"
+      description: "檢視測試案例確認公式/規則覆蓋完整"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Profile 選擇決策樹
+# ═══════════════════════════════════════════════════════════════════════════════
+
+profileSelection:
+  decisionTree:
+    - question: "結果是否可在畫面即時看到（< 60 秒）？"
+      yes: "考慮 e2e"
+      no: "往下判斷"
+
+    - question: "是否需要時間操作（週結、月結、延遲執行）？"
+      yes: "使用 integration"
+      no: "往下判斷"
+
+    - question: "是否依賴外部服務且需要 Mock？"
+      yes: "使用 integration"
+      no: "往下判斷"
+
+    - question: "是否為後端邏輯變更，無 UI 互動，需要 Console 驗證？"
+      yes: "使用 calculation"
+      no: "往下判斷"
+
+    - question: "是否為純計算/規則邏輯？"
+      yes: "使用 unit"
+      no: "使用 integration"
+
+  # 快速參考
+  quickReference:
+    e2e:
+      - "表單送出後頁面更新"
+      - "點擊按鈕後顯示 Modal"
+      - "搜尋後列表篩選"
+      - "登入後跳轉頁面"
+    integration:
+      - "上傳檔案後等待處理完成"
+      - "週/月結算排程"
+      - "外部 API 串接"
+      - "跨 Domain 資料流"
+      - "背景 Job 處理"
+    calculation:
+      - "Entity 方法邏輯變更（如 b2b? 判斷）"
+      - "稅額計算、金額計算"
+      - "業務規則判斷（如路由選擇）"
+      - "資料轉換邏輯"
+      - "無 UI 的 Service/UseCase 變更"
+    unit:
+      - "金額計算公式"
+      - "日期格式轉換"
+      - "權限規則判斷"
+      - "狀態機轉換"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Fix Profiles - Bug 修復驗收類型
+# ═══════════════════════════════════════════════════════════════════════════════
+# Fix 任務的驗收配置，詳細定義請參考：
+# - fix-profiles.yml: Profile 定義與 Affected Layer
+# - fix-tools.yml: 工具清單（Query/Command 分類）
+# - fix-discovery-flows.yml: 14 個 Discovery Source 調查流程
+
+fixProfiles:
+  configFiles:
+    profiles: "fix-profiles.yml"
+    tools: "fix-tools.yml"
+    flows: "fix-discovery-flows.yml"
+
+  # Profile 類型（按問題表象分類）
+  types:
+    ui:
+      name: "頁面/UI 問題"
+      discoverySources: ["D1", "D2", "D3", "D19"]
+    data:
+      name: "資料問題"
+      discoverySources: ["D4", "D14"]
+    worker:
+      name: "佇列/排程問題"
+      discoverySources: ["D5", "D6"]
+    performance:
+      name: "效能問題"
+      discoverySources: ["D8", "D9"]
+    integration:
+      name: "整合問題"
+      discoverySources: ["D10"]
+    alert:
+      name: "警報問題"
+      discoverySources: ["D7"]
+    security:
+      name: "安全問題"
+      discoverySources: ["D12", "D13"]
+
+  # 工具分類
+  toolCategories:
+    query:
+      description: "只讀取，不改變狀態"
+      tools:
+        - browser
+        - aws_connect
+        - read
+        - error_tracking
+        - apm
+    command:
+      description: "可改變狀態，僅限 Local/Staging"
+      tools:
+        - write
+        - bash
+        - migrate
+        - git_command
+        - debugger
+
+  # 核心原則
+  principles:
+    - "Production 資料不可變"
+    - "Rails Runner 必須在 Read Code 之後"
+    - "Git History 放到最後一站"
+    - "信心度 ≥95% 才可修復，<95% 返回人類"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Executors - 測試執行器
+# ═══════════════════════════════════════════════════════════════════════════════
+
+executors:
+
+  chrome-mcp:
+    name: "Chrome MCP"
+    description: "使用 Claude Chrome 擴充功能執行瀏覽器操作"
+    type: "browser"
+    capabilities:
+      - navigate
+      - click
+      - input
+      - form_input
+      - screenshot
+      - record_gif
+      - read_page
+      - find
+      - execute_js
+      - wait
+      - scroll
+    environments:
+      - local
+      - staging
+      - production  # 只讀
+    toolMapping:
+      navigate: "mcp__claude-in-chrome__navigate"
+      click: "mcp__claude-in-chrome__computer"
+      input: "mcp__claude-in-chrome__form_input"
+      screenshot: "mcp__claude-in-chrome__computer"
+      record_gif: "mcp__claude-in-chrome__gif_creator"
+      read_page: "mcp__claude-in-chrome__read_page"
+      find: "mcp__claude-in-chrome__find"
+      execute_js: "mcp__claude-in-chrome__javascript_tool"
+
+  rspec:
+    name: "RSpec"
+    description: "Ruby 測試框架"
+    type: "test-framework"
+    language: "ruby"
+    command: "cd {project_path} && bundle exec rspec {test_file}"
+    helpers:
+      time: ["travel_to", "freeze_time"]
+      mock: ["allow", "expect", "stub_request"]
+      async: ["perform_enqueued_jobs", "Sidekiq::Testing"]
+
+  jest:
+    name: "Jest"
+    description: "JavaScript 測試框架"
+    type: "test-framework"
+    language: "javascript"
+    command: "cd {project_path} && npm test -- {test_file}"
+    helpers:
+      time: ["jest.useFakeTimers", "jest.advanceTimersByTime"]
+      mock: ["jest.mock", "jest.spyOn"]
+
+  pytest:
+    name: "Pytest"
+    description: "Python 測試框架"
+    type: "test-framework"
+    language: "python"
+    command: "cd {project_path} && pytest {test_file}"
+    helpers:
+      time: ["freezegun.freeze_time"]
+      mock: ["unittest.mock", "pytest-mock"]
+
+  skill:aws-operations:
+    name: "AWS Operations"
+    description: "連線到遠端機器執行驗證"
+    type: "skill"
+    skillName: "aws-operations"
+    capabilities:
+      - ssh
+      - logs
+      - db_query
+      - service_status
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Environments - 執行環境
+# ═══════════════════════════════════════════════════════════════════════════════
+
+environments:
+
+  local:
+    name: "本地開發"
+    baseUrl: "http://localhost:3000"
+    setup:
+      script: "rails runner db/seeds/acceptance/{task_id}_setup.rb"
+      description: "建立驗收測試資料"
+    cleanup:
+      script: "rails runner db/seeds/acceptance/{task_id}_cleanup.rb"
+      description: "清理驗收測試資料"
+    seedPrefix: "ACC-"
+
+  staging:
+    name: "Staging"
+    baseUrl: "https://staging.example.com"
+    accessVia: "skill:aws-operations"
+    setup:
+      note: "Staging 環境使用共享測試資料"
+    cleanup:
+      note: "Staging 環境由定時任務清理"
+
+  production:
+    name: "Production"
+    baseUrl: "https://example.com"
+    accessVia: "skill:aws-operations"
+    readOnly: true
+    note: "Production 環境僅可觀察，不可修改資料"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Human Verification Methods - 人類驗收方式
+# ═══════════════════════════════════════════════════════════════════════════════
+
+humanVerificationMethods:
+
+  review_test_cases:
+    name: "檢視測試案例"
+    description: "檢視測試案例確認業務場景覆蓋完整"
+    steps:
+      - "檢視測試檔案中的測試案例"
+      - "確認涵蓋所有業務規則"
+      - "確認邊界值測試存在"
+      - "確認測試描述清楚反映業務需求"
+
+  browser_walkthrough:
+    name: "瀏覽器操作"
+    description: "透過瀏覽器手動執行完整流程"
+    steps:
+      - "執行 setup script 建立測試資料"
+      - "開啟瀏覽器，登入系統"
+      - "依序執行驗收步驟"
+      - "確認預期結果"
+      - "執行 cleanup script 清理資料"
+    alternative: "觀看 E2E 測試錄影 (GIF)"
+
+  api_client:
+    name: "API 測試"
+    description: "使用 API 客戶端測試"
+    steps:
+      - "開啟 Postman 或使用 curl"
+      - "發送測試請求"
+      - "檢查回應狀態碼和內容"
+
+  log_inspection:
+    name: "日誌檢查"
+    description: "查看執行日誌確認結果"
+    steps:
+      - "觸發 Worker/Job 執行"
+      - "查看相關日誌"
+      - "確認處理成功"
+
+  output_inspection:
+    name: "輸出檢查"
+    description: "檢查批次作業輸出"
+    steps:
+      - "準備輸入資料"
+      - "執行批次作業"
+      - "檢查輸出結果"
+
+  visual_inspection:
+    name: "視覺檢查"
+    description: "檢視報表/畫面輸出"
+    steps:
+      - "產生報表/畫面"
+      - "檢視內容是否正確"
+      - "確認格式符合預期"
+
+  console_verification:
+    name: "Console 驗證"
+    description: "透過 Rails Console 或 API 驗證後端邏輯"
+    required: true
+    environments:
+      - staging
+      - local
+    steps:
+      - "連線到 staging 環境的 Rails console"
+      - "執行驗證程式碼片段"
+      - "確認輸出符合預期"
+      - "記錄驗證結果"
+    template: |
+      ## 人工驗收指南
+
+      ### 方式 1：Rails Console 驗證
+
+      ```ruby
+      # 在 staging 環境的 Rails console 執行
+      # 連線方式：/aws-operations 或 ssh
+
+      # 驗證 1：{scenario_title}
+      {console_code}
+
+      # 預期結果：{expected_result}
+      ```
+
+      ### 方式 2：下次業務流程執行時驗證
+
+      等下次 {business_process} 執行時，檢查：
+      - [ ] {check_item_1}
+      - [ ] {check_item_2}
+
+      ### 驗收檢查清單
+
+      | 項目 | 預期結果 | 驗證方式 |
+      |------|---------|---------|
+      | {item} | {expected} | {method} |
+
+  next_execution_verification:
+    name: "下次執行時驗證"
+    description: "等待下次業務流程執行時驗證"
+    when:
+      - "變更影響週期性作業（週結、月結）"
+      - "變更影響批次作業"
+      - "無法立即觸發的流程"
+    steps:
+      - "記錄驗證項目清單"
+      - "等待下次業務流程執行"
+      - "檢查執行結果"
+      - "回報驗證結果"

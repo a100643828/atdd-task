@@ -1,0 +1,75 @@
+# 規格撰寫指南
+
+## 規格結構
+
+每個規格必須包含：
+
+1. **Business Context**：為什麼、給誰、影響
+2. **Domain 資訊**：主要 Domain、相關 Domains
+3. **ATDD Profile**：驗收類型、選擇原因
+4. **Acceptance Criteria**：驗收標準清單
+5. **Scenarios**：Given-When-Then 場景
+
+## 撰寫原則
+
+### Acceptance Criteria
+
+- 使用業務語言，不用技術語言
+- 每條標準必須可驗證
+- 避免模糊詞彙（「快速」、「友善」）
+
+```markdown
+## Acceptance Criteria
+
+- [ ] 使用者可以看到發票狀態變更為「已作廢」
+- [ ] 系統記錄作廢時間和原因
+- [ ] 作廢後發票無法再次修改
+```
+
+### Scenarios
+
+每個場景必須有：
+- **Given**：前置條件（系統狀態、資料）
+- **When**：使用者動作（觸發事件）
+- **Then**：預期結果（可驗證的業務結果）
+
+```markdown
+### Scenario 1: 成功作廢有效發票
+
+**Given** 有一張有效的發票 ACC-001
+**And** 該發票尚未被 ERP 結算
+**When** 會計人員點擊「作廢」並填入原因「開錯客戶」
+**Then** 發票狀態應變更為「已作廢」
+**And** 系統應記錄作廢時間和原因
+**And** 頁面應顯示「發票已成功作廢」訊息
+```
+
+### 場景類型
+
+1. **Happy Path**：正常成功流程
+2. **Alternative Path**：其他成功路徑
+3. **Error Path**：錯誤處理
+4. **Edge Case**：邊界情況
+
+## 規格檔案位置
+
+```
+specs/{project}/{task_id}-{short_name}.md
+```
+
+範例：
+```
+specs/core_web/abc123-void-invoice.md
+```
+
+## 驗收標準數量建議
+
+- 簡單功能：3-5 個
+- 一般功能：5-8 個
+- 複雜功能：8-12 個
+
+如果超過 12 個，考慮拆分為多個任務或上升為 Epic。
+
+## 規格模板
+
+使用 `.claude/templates/spec-template.md` 作為起始模板。

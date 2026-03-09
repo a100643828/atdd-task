@@ -1,0 +1,140 @@
+# Test Suite Template
+#
+# 用途：定義可重複執行的 E2E 測試套件
+# 使用者：specist 生成、tester 執行、gatekeeper 審核
+#
+# 複製此檔案到：tests/{project_id}/suites/{suite_id}/suite.yml
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 基本資訊
+# ═══════════════════════════════════════════════════════════════════════════════
+id: "{suite_id}"
+title: "{suite_title}"
+description: |
+  {測試套件描述}
+
+# Domain 參考
+domain:
+  primary: null                       # 主要 Domain（如 Accounting::Invoice）
+  related: []                         # 相關 Domains
+
+# Epic 關聯（可選）
+epic:
+  id: null                            # Epic ID（如果屬於某個 Epic）
+  taskRef: null                       # 對應的 Task 參考
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 依賴設定
+# ═══════════════════════════════════════════════════════════════════════════════
+dependencies:
+  # 共用 fixtures（從 tests/{project}/shared/fixtures/ 引用）
+  shared: []
+  # 範例：
+  # - "users.yml"
+  # - "base_data.yml"
+
+  # 前置套件（必須先執行通過的其他套件）
+  requires: []
+  # 範例：
+  # - suiteId: "E2E-T0"
+  #   description: "環境盤點"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 環境設定
+# ═══════════════════════════════════════════════════════════════════════════════
+environment:
+  target: "local"                     # local | staging | production
+  baseUrl: "http://localhost:3000"
+  credentials:
+    email: null                       # 測試帳號 email
+  assumeLoggedIn: false               # 假設已登入（跳過登入流程）
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 環境準備（Setup）
+# ═══════════════════════════════════════════════════════════════════════════════
+setup:
+  # 前置檢查
+  preflight:
+    - check: "server_running"
+      command: "curl -s {baseUrl}/health"
+      expected: "ok"
+      required: true
+
+    - check: "database_ready"
+      command: "cd {project_path} && rails runner 'puts ActiveRecord::Base.connected?'"
+      expected: "true"
+      required: true
+
+  # 資料準備腳本
+  script: "fixtures/seed.rb"
+
+  # 資料策略
+  # - tagged: 資料加上 test_run_id 標記，執行後只清理標記的資料
+  # - isolated: 使用獨立的測試資料庫/schema
+  # - none: 不建立資料，使用現有資料
+  strategy: "tagged"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 環境清理（Cleanup）
+# ═══════════════════════════════════════════════════════════════════════════════
+cleanup:
+  # 清理腳本
+  script: "fixtures/cleanup.rb"
+
+  # 清理策略
+  # - tagged: 只清理有 test_run_id 標記的資料
+  # - full: 清理所有測試資料（依 prefix）
+  # - none: 不清理（保留資料供除錯）
+  strategy: "tagged"
+
+  # 失敗時處理
+  # - prompt: 詢問是否清理
+  # - force: 強制清理
+  # - skip: 跳過清理（保留現場）
+  onFailure: "prompt"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 測試場景清單
+# ═══════════════════════════════════════════════════════════════════════════════
+scenarios:
+  - id: "S1"
+    title: "{場景標題}"
+    file: "scenarios/S1-{scenario_name}.yml"
+    priority: "high"                  # high | medium | low
+    critical: false                   # 是否為關鍵場景
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 驗證標準
+# ═══════════════════════════════════════════════════════════════════════════════
+validationCriteria:
+  - id: "V1"
+    description: "{驗證項目描述}"
+    type: "visual"                    # visual | data | state | api
+    scenarios: []                     # 相關場景 ID
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 執行設定
+# ═══════════════════════════════════════════════════════════════════════════════
+execution:
+  settings:
+    screenshotOnStep: true            # 每步驟截圖
+    screenshotOnError: true           # 錯誤時截圖
+    stopOnFirstFailure: false         # 第一個失敗就停止
+    timeout: 30000                    # 單步驟超時（毫秒）
+    recording: true                   # 錄製 GIF
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 統計資訊（自動更新）
+# ═══════════════════════════════════════════════════════════════════════════════
+stats:
+  totalRuns: 0
+  lastRun: null                       # 最後執行時間
+  lastStatus: null                    # 最後執行結果 (passed | failed | aborted)
+  passRate: null                      # 通過率（如 "85%"）
+  averageDuration: null               # 平均執行時間
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 時間戳記
+# ═══════════════════════════════════════════════════════════════════════════════
+createdAt: "{ISO_timestamp}"
+updatedAt: "{ISO_timestamp}"

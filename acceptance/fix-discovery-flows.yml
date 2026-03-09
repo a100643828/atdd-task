@@ -1,0 +1,593 @@
+# Fix Discovery Source Flows
+#
+# 用途：定義每個 Discovery Source (Dx) 的調查工具流程
+# 原則：Tool 流程由 Discovery Source 決定，不是由 Profile 決定
+#
+# 結構：
+#   - Discovery Source (Dx) → 決定調查工具流程
+#   - Affected Layer (調查後確定) → 決定修復方式、測試類型
+#   - Fix Profile (分類) → 用於統計、報表
+#
+# 流程符號說明：
+#   - → : 下一步
+#   - (?) 修復 : 如果釐清（信心度 ≥95%）則修復
+#   - / : 否則繼續下一步
+#   - 返回人類 : 信心度 <95%，將調查結果回報人類
+#   - 詢問 : 需要人類確認才能執行
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# UI Profile
+# ═══════════════════════════════════════════════════════════════════════════════
+
+D1:
+  id: "D1"
+  name: "頁面顯示錯誤（View Layer）"
+  profile: "ui"
+  data_related: false
+  description: "純 View Layer 問題，如 CSS 跑版、Template 語法錯誤、前端 JS 錯誤"
+
+  examples:
+    - "按鈕樣式跑掉"
+    - "文字顯示亂碼"
+    - "RWD 在特定寬度壞掉"
+    - "JS console 有錯誤"
+
+  flow: "Browser → Read Code → (?) 修復 / Git History → (?) 修復 / 返回人類"
+
+  tools_used:
+    - browser
+    - read.local_codebase
+    - read.git_history
+
+  possible_affected_layers:
+    - presentation
+
+# ───────────────────────────────────────────────────────────────────────────────
+
+D2:
+  id: "D2"
+  name: "頁面顯示錯誤（資料相關）"
+  profile: "ui"
+  data_related: true
+  description: "頁面顯示錯誤但根因在 Domain/Data Layer，如計算錯誤、資料缺失"
+
+  examples:
+    - "發票金額顯示 NaN"
+    - "用戶名稱顯示 null"
+    - "列表應該有資料但顯示空"
+    - "狀態顯示與預期不符"
+
+  flow: "Browser → Read Code → (?) 修復 / Server Log → (?) 修復 / Rails Runner → (?) 修復 / Domain Context → (?) 修復 / 詢問 Migrate → Local Debug → (?) 修復 / Git History → (?) 修復 / 返回人類"
+
+  tools_used:
+    - browser
+    - read.local_codebase
+    - aws_connect.server_log
+    - aws_connect.rails_runner
+    - read.domain_context
+    - migrate
+    - bash.rails_runner
+    - debugger
+    - read.git_history
+
+  possible_affected_layers:
+    - presentation
+    - application
+    - domain
+    - infrastructure
+
+# ───────────────────────────────────────────────────────────────────────────────
+
+D3:
+  id: "D3"
+  name: "頁面流程錯誤"
+  profile: "ui"
+  data_related: null
+  description: "頁面流程與預期 Feature 或規格不符"
+
+  examples:
+    - "送出表單後應該跳轉但沒有"
+    - "步驟 2 應該在步驟 1 之後但可以直接進入"
+    - "按鈕在某狀態應該 disable 但沒有"
+    - "流程少了一個確認步驟"
+
+  flow: "Browser → Read Spec → Read Code → (?) 修復 / Server Log → Domain Context → (?) 修復 / Git History → (?) 修復 / 返回人類"
+
+  tools_used:
+    - browser
+    - read.local_codebase  # Read Spec + Read Code
+    - aws_connect.server_log
+    - read.domain_context
+    - read.git_history
+
+  possible_affected_layers:
+    - presentation
+    - application
+    - domain
+
+# ───────────────────────────────────────────────────────────────────────────────
+
+D19:
+  id: "D19"
+  name: "跨瀏覽器/裝置問題"
+  profile: "ui"
+  data_related: false
+  description: "只在特定瀏覽器或裝置才發生的問題"
+
+  examples:
+    - "Safari 才會壞"
+    - "IE11 不支援某語法"
+    - "手機版跑版"
+    - "特定 Android 版本有問題"
+
+  flow: "Browser(問題環境) → Browser(對照) → Read Code → (?) 修復 / Git History → (?) 修復 / 返回人類"
+
+  tools_used:
+    - browser
+    - read.local_codebase
+    - read.git_history
+
+  possible_affected_layers:
+    - presentation
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Data Profile
+# ═══════════════════════════════════════════════════════════════════════════════
+
+D4:
+  id: "D4"
+  name: "資料面錯誤"
+  profile: "data"
+  data_related: true
+  description: "從報表或 Database 直接發現的資料錯誤（含 Redis 快取）"
+
+  examples:
+    - "報表數字加總不對"
+    - "某筆資料狀態錯誤"
+    - "資料應該存在但找不到"
+    - "Redis 快取與 DB 不一致"
+
+  flow: "Read Code → (?) 修復 / Rails Runner → Server Log → (?) 修復 / Domain Context → (?) 修復 / Migrate → Local 並發測試 → (?) 修復 / 返回人類"
+
+  tools_used:
+    - read.local_codebase
+    - aws_connect.rails_runner
+    - aws_connect.server_log
+    - read.domain_context
+    - migrate
+    - bash.rails_runner
+
+  possible_affected_layers:
+    - domain
+    - infrastructure
+
+  special_consideration:
+    data_fix: |
+      如果確認是資料問題（不只是程式問題），需要：
+      1. 修復程式碼防止再發生
+      2. 評估是否需要修正現有資料
+      3. 如需修正資料，必須：
+         - 撰寫 migration script
+         - 先在 Staging 測試
+         - Production 執行需人類確認
+
+# ───────────────────────────────────────────────────────────────────────────────
+
+D14:
+  id: "D14"
+  name: "資料重複/遺失"
+  profile: "data"
+  data_related: true
+  description: "Race condition 造成的資料重複建立或遺失"
+
+  examples:
+    - "同一筆訂單建立了兩次"
+    - "並發更新導致資料被覆蓋"
+    - "Unique constraint violation"
+    - "資料莫名消失"
+
+  flow: "Read Code → (?) 修復 / Rails Runner → (?) 修復 / Server Log → (?) 修復 / Domain Context → RDS/Redis Log → (?) 修復 / Migrate → Local 並發測試 → (?) 修復 / 返回人類"
+
+  tools_used:
+    - read.local_codebase
+    - aws_connect.rails_runner
+    - aws_connect.server_log
+    - read.domain_context
+    - aws_connect.rds_log
+    - migrate
+    - bash.rails_runner
+
+  possible_affected_layers:
+    - domain
+    - infrastructure
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Worker Profile
+# ═══════════════════════════════════════════════════════════════════════════════
+
+D5:
+  id: "D5"
+  name: "佇列/排程錯誤（資料相關）"
+  profile: "worker"
+  data_related: true
+  description: "Sidekiq/排程任務因資料問題失敗"
+
+  examples:
+    - "Job 因找不到資料而 fail"
+    - "Job 處理的資料狀態不對"
+    - "Job 執行到一半資料被改變"
+
+  flow: "App Status → Error Tracking → Read Code → (?) 修復 / Rails Runner → (?) 修復 / Server Log → (?) 修復 / Domain Context → (?) 修復 / Migrate → Local Sidekiq → (?) 修復 / Git History → (?) 修復 / 返回人類"
+
+  tools_used:
+    - aws_connect.app_status
+    - error_tracking
+    - read.local_codebase
+    - aws_connect.rails_runner
+    - aws_connect.server_log
+    - read.domain_context
+    - migrate
+    - bash.sidekiq_local
+    - read.git_history
+
+  possible_affected_layers:
+    - application
+    - domain
+    - infrastructure
+
+# ───────────────────────────────────────────────────────────────────────────────
+
+D6:
+  id: "D6"
+  name: "佇列/排程錯誤（程式問題）"
+  profile: "worker"
+  data_related: false
+  description: "Sidekiq/排程任務因程式錯誤失敗"
+
+  examples:
+    - "NoMethodError"
+    - "ArgumentError"
+    - "Timeout"
+    - "Memory 超過限制"
+
+  flow: "App Status → Error Tracking → Read Code → (?) 修復 / Local Sidekiq → Server Log → (?) 修復 / Git History → (?) 修復 / 返回人類"
+
+  tools_used:
+    - aws_connect.app_status
+    - error_tracking
+    - read.local_codebase
+    - bash.sidekiq_local
+    - aws_connect.server_log
+    - read.git_history
+
+  possible_affected_layers:
+    - application
+    - domain
+    - infrastructure
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Performance Profile
+# ═══════════════════════════════════════════════════════════════════════════════
+
+D8:
+  id: "D8"
+  name: "APM 效能警報"
+  profile: "performance"
+  data_related: false
+  description: "從 APM 監控發現的效能問題"
+
+  examples:
+    - "某 endpoint 回應時間超過閾值"
+    - "N+1 query 警報"
+    - "Memory 使用持續上升"
+    - "Database time 過高"
+
+  flow: "APM → Read Code → (?) 修復 / 分支(DB: RDS Log / Ruby: 分析邏輯 / External: Server Log / Memory: 分析邏輯) → (?) 修復 / Git History → (?) 修復 / 返回人類"
+
+  tools_used:
+    - apm
+    - read.local_codebase
+    - aws_connect.rds_log
+    - aws_connect.server_log
+    - read.git_history
+
+  branches:
+    db_time_high:
+      description: "Database 時間過高"
+      tools:
+        - aws_connect.rds_log
+      focus:
+        - "加入 index"
+        - "修改 query 寫法"
+        - "加入 eager loading"
+        - "加入 caching"
+    ruby_time_high:
+      description: "Ruby 執行時間過高"
+      focus:
+        - "迴圈效率"
+        - "不必要的計算"
+        - "可以 memoize 的地方"
+    external_time_high:
+      description: "外部服務時間過高"
+      tools:
+        - aws_connect.server_log
+      focus:
+        - "timeout/retry/async"
+    memory_issue:
+      description: "Memory 問題"
+      focus:
+        - "大量資料載入"
+        - "未釋放的 reference"
+        - "批次處理改為 find_each"
+
+  possible_affected_layers:
+    - application
+    - domain
+    - infrastructure
+
+# ───────────────────────────────────────────────────────────────────────────────
+
+D9:
+  id: "D9"
+  name: "用戶回報慢"
+  profile: "performance"
+  data_related: false
+  description: "用戶反應效能問題但沒有明確監控警報"
+
+  examples:
+    - "用戶說頁面很慢"
+    - "用戶說某功能 timeout"
+    - "用戶說等很久"
+
+  flow: "Browser → 分支(前端慢: DevTools / 後端慢: APM / 無法重現: Server Log) → Read Code → Local Benchmark → (?) 修復 / 返回人類"
+
+  tools_used:
+    - browser
+    - apm
+    - aws_connect.server_log
+    - read.local_codebase
+    - bash.benchmark
+
+  branches:
+    frontend_slow:
+      description: "前端載入慢"
+      tools:
+        - browser  # DevTools
+      focus:
+        - "大檔案"
+        - "過多請求"
+        - "阻塞資源"
+    backend_slow:
+      description: "後端回應慢"
+      tools:
+        - apm
+      note: "有 APM 數據時改用 D8 流程"
+    cannot_reproduce:
+      description: "無法重現"
+      tools:
+        - aws_connect.server_log
+      note: "查看用戶操作時間點的 log"
+
+  possible_affected_layers:
+    - presentation
+    - application
+    - domain
+    - infrastructure
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Integration Profile
+# ═══════════════════════════════════════════════════════════════════════════════
+
+D10:
+  id: "D10"
+  name: "外部服務錯誤"
+  profile: "integration"
+  data_related: null
+  description: "第三方 API、Webhook、Email、檔案存取等外部服務問題"
+
+  examples:
+    - "金流 API 回傳錯誤"
+    - "ERP 同步失敗"
+    - "Webhook 沒收到"
+    - "Email 寄不出去"
+    - "S3 上傳失敗"
+
+  flow: "Error Tracking → Server Log → Read Code → (?) 修復 / 分支(Request 錯誤 / Response 處理錯誤 / 間歇性: Script 測試連線) → (?) 修復 / Domain Context → (?) 修復 / 返回人類"
+
+  tools_used:
+    - error_tracking
+    - aws_connect.server_log
+    - read.local_codebase
+    - aws_connect.script
+    - read.domain_context
+
+  branches:
+    request_wrong:
+      description: "我方 Request 組成錯誤"
+      affected_layer: "infrastructure"
+    response_handling_wrong:
+      description: "我方 Response 處理錯誤"
+      affected_layer: "infrastructure"
+    intermittent:
+      description: "間歇性問題"
+      tools:
+        - aws_connect.script
+      focus:
+        - "connection_issue: 檢查網路/防火牆設定"
+        - "timeout_issue: 調整 timeout 設定或加入重試機制"
+
+  possible_affected_layers:
+    - infrastructure
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Alert Profile
+# ═══════════════════════════════════════════════════════════════════════════════
+
+D7:
+  id: "D7"
+  name: "Log 紀錄錯誤"
+  profile: "alert"
+  data_related: null
+  description: "從 Log 監控或主動檢查發現的錯誤"
+
+  examples:
+    - "Error log 數量突然增加"
+    - "特定錯誤持續發生"
+    - "監控系統發出警報"
+
+  flow: "Server Log → Error Tracking → Read Code → (?) 修復 / Rails Runner → (?) 修復 / Git History → Read 最近部署 → (?) 修復 / 返回人類"
+
+  tools_used:
+    - aws_connect.server_log
+    - error_tracking
+    - read.local_codebase
+    - aws_connect.rails_runner
+    - read.git_history
+
+  possible_affected_layers:
+    - presentation
+    - application
+    - domain
+    - infrastructure
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Security Profile
+# ═══════════════════════════════════════════════════════════════════════════════
+
+D12:
+  id: "D12"
+  name: "權限錯誤"
+  profile: "security"
+  data_related: false
+  description: "用戶無法存取應有權限的資源，或越權存取"
+
+  examples:
+    - "用戶說看不到應該看到的資料"
+    - "用戶可以存取不該存取的頁面"
+    - "權限檢查沒生效"
+
+  flow: "Read Code → Read Feature Spec → (?) 修復 / Rails Runner → (?) 修復 / Domain Context → (?) 修復 / 返回人類"
+
+  tools_used:
+    - read.local_codebase  # Read Code + Read Feature Spec
+    - aws_connect.rails_runner
+    - read.domain_context
+
+  possible_affected_layers:
+    - application
+
+# ───────────────────────────────────────────────────────────────────────────────
+
+D13:
+  id: "D13"
+  name: "安全掃描"
+  profile: "security"
+  data_related: false
+  description: "弱點掃描、滲透測試發現的安全問題"
+
+  examples:
+    - "XSS 漏洞"
+    - "SQL injection"
+    - "CSRF token 問題"
+    - "敏感資料洩露"
+    - "不安全的 dependency"
+
+  flow: "Read Code → 分支(Dependency: 更新需人類確認 / Code: 定位漏洞) → (?) 修復 / 返回人類"
+
+  tools_used:
+    - read.local_codebase
+
+  branches:
+    dependency_issue:
+      description: "不安全的 Dependency"
+      action: "更新 dependency"
+      constraint: "需要人類確認是否允許更新（修改 Gemfile/package.json）"
+    code_vulnerability:
+      description: "程式碼漏洞"
+      types:
+        xss:
+          action: "加入 output escaping"
+          affected_layer: "presentation"
+        sql_injection:
+          action: "改用 parameterized query"
+          affected_layer: "infrastructure"
+        csrf:
+          action: "加入 CSRF token 檢查"
+          affected_layer: "application"
+        data_exposure:
+          action: "移除敏感資料或加入存取控制"
+          affected_layer: "application"
+
+  possible_affected_layers:
+    - presentation
+    - application
+    - infrastructure
+
+  special_consideration:
+    security_fix: |
+      安全問題修復注意事項：
+      1. 不要在修復 commit 中詳細描述漏洞細節
+      2. 修復後需要安全審查（Review 階段處理）
+      3. 如果是已被利用的漏洞，需要評估影響範圍
+      4. 可能需要通知相關人員
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 共用定義
+# ═══════════════════════════════════════════════════════════════════════════════
+
+common:
+  confidence_threshold:
+    description: "信心度門檻"
+    value: 95
+    clear: "信心度 ≥ 95% → 進行修復"
+    unclear: "信心度 < 95% → 返回人類"
+
+  return_to_human:
+    description: "返回人類時需提供的資訊"
+    output:
+      - "目前調查結果"
+      - "已使用的工具和發現"
+      - "已排除的可能性"
+      - "無法釐清的具體問題"
+      - "建議的下一步"
+
+  flow_symbols:
+    arrow: "→ 下一步"
+    decision: "(?) 修復 如果釐清則修復"
+    continue: "/ 否則繼續"
+    ask: "詢問 需要人類確認"
+    branch: "分支(...) 根據情況選擇"
+    return: "返回人類 信心度不足時"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 流程總覽
+# ═══════════════════════════════════════════════════════════════════════════════
+
+summary:
+  ui:
+    D1: "Browser → Read Code → (?) 修復 / Git History → (?) 修復 / 返回人類"
+    D2: "Browser → Read Code → (?) 修復 / Server Log → (?) 修復 / Rails Runner → (?) 修復 / Domain Context → (?) 修復 / 詢問 Migrate → Local Debug → (?) 修復 / Git History → (?) 修復 / 返回人類"
+    D3: "Browser → Read Spec → Read Code → (?) 修復 / Server Log → Domain Context → (?) 修復 / Git History → (?) 修復 / 返回人類"
+    D19: "Browser(問題環境) → Browser(對照) → Read Code → (?) 修復 / Git History → (?) 修復 / 返回人類"
+
+  data:
+    D4: "Read Code → (?) 修復 / Rails Runner → Server Log → (?) 修復 / Domain Context → (?) 修復 / Migrate → Local 並發測試 → (?) 修復 / 返回人類"
+    D14: "Read Code → (?) 修復 / Rails Runner → (?) 修復 / Server Log → (?) 修復 / Domain Context → RDS/Redis Log → (?) 修復 / Migrate → Local 並發測試 → (?) 修復 / 返回人類"
+
+  worker:
+    D5: "App Status → Error Tracking → Read Code → (?) 修復 / Rails Runner → (?) 修復 / Server Log → (?) 修復 / Domain Context → (?) 修復 / Migrate → Local Sidekiq → (?) 修復 / Git History → (?) 修復 / 返回人類"
+    D6: "App Status → Error Tracking → Read Code → (?) 修復 / Local Sidekiq → Server Log → (?) 修復 / Git History → (?) 修復 / 返回人類"
+
+  performance:
+    D8: "APM → Read Code → (?) 修復 / 分支(DB: RDS Log / Ruby: 分析邏輯 / External: Server Log / Memory: 分析邏輯) → (?) 修復 / Git History → (?) 修復 / 返回人類"
+    D9: "Browser → 分支(前端慢: DevTools / 後端慢: APM / 無法重現: Server Log) → Read Code → Local Benchmark → (?) 修復 / 返回人類"
+
+  integration:
+    D10: "Error Tracking → Server Log → Read Code → (?) 修復 / 分支(Request 錯誤 / Response 處理錯誤 / 間歇性: Script 測試連線) → (?) 修復 / Domain Context → (?) 修復 / 返回人類"
+
+  alert:
+    D7: "Server Log → Error Tracking → Read Code → (?) 修復 / Rails Runner → (?) 修復 / Git History → Read 最近部署 → (?) 修復 / 返回人類"
+
+  security:
+    D12: "Read Code → Read Feature Spec → (?) 修復 / Rails Runner → (?) 修復 / Domain Context → (?) 修復 / 返回人類"
+    D13: "Read Code → 分支(Dependency: 更新需人類確認 / Code: 定位漏洞) → (?) 修復 / 返回人類"

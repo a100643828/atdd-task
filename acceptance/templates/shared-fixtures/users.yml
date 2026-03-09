@@ -1,0 +1,62 @@
+# Shared Fixtures: Users
+#
+# 用途：定義共用的測試使用者資料
+# 位置：tests/{project_id}/shared/fixtures/users.yml
+#
+# 這些使用者可被多個測試套件共用，避免重複建立
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 測試使用者定義
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 管理員帳號（通常用於設定和驗證）
+admin:
+  email: "admin@test.example.com"
+  role: "admin"
+  permissions:
+    - "manage_all"
+  notes: "測試用管理員，可存取所有功能"
+
+# 一般使用者（用於標準流程測試）
+standard_user:
+  email: "user@test.example.com"
+  role: "user"
+  permissions:
+    - "read"
+    - "write"
+  notes: "標準使用者，用於一般功能測試"
+
+# 唯讀使用者（用於權限測試）
+readonly_user:
+  email: "readonly@test.example.com"
+  role: "viewer"
+  permissions:
+    - "read"
+  notes: "唯讀使用者，用於驗證權限限制"
+
+# 會計人員（用於財務相關測試）
+accountant:
+  email: "accountant@test.example.com"
+  role: "accountant"
+  permissions:
+    - "read"
+    - "write"
+    - "export"
+    - "approve"
+  erp_employee_no: "00099"
+  notes: "會計人員，用於 ERP 週期和發票測試"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 使用說明
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# 在 suite.yml 中引用：
+#   dependencies:
+#     shared:
+#       - "users.yml"
+#
+# 在 seed 腳本中使用：
+#   def load_shared_fixtures
+#     users = YAML.load_file('../../shared/fixtures/users.yml')
+#     create_user(users['accountant'])
+#   end

@@ -1,0 +1,201 @@
+# 2FA Local User Mismatch
+# 本地開發環境的 2FA 驗證失敗問題
+
+id: "2fa-local-user-mismatch"
+title: "2FA 本地用戶不匹配導致登入失敗"
+category: "integration"
+severity: "medium"
+created_at: "2024-01-15"
+updated_at: "2024-01-15"
+
+# Hash Tags（快速匹配用）
+tags:
+  fix_profile:
+    - integration
+    - security
+  layer:
+    - application
+    - infrastructure
+  domain:
+    - Authentication
+    - User
+  technology:
+    - rails
+    - devise
+    - devise-two-factor
+  error_pattern:
+    - authentication_failed
+    - otp_failed
+    - invalid_token
+  symptom:
+    - login_failed
+
+identification:
+  keywords:
+    - "2FA"
+    - "two-factor"
+    - "OTP"
+    - "驗證失敗"
+    - "登入失敗"
+    - "local user"
+    - "devise"
+
+  symptoms:
+    - "本地環境 2FA 驗證碼輸入正確但驗證失敗"
+    - "Production 資料 sync 後登入失敗"
+    - "OTP secret 不匹配錯誤"
+    - "本地用戶與 Production 用戶資料不一致"
+
+  error_patterns:
+    - "Invalid two-factor authentication code"
+    - "OTP verification failed"
+    - "Devise::TwoFactorAuthentication"
+
+  typical_context:
+    environments:
+      - "development"
+      - "staging"
+    frameworks:
+      - "Rails"
+      - "Devise"
+    conditions:
+      - "從 Production 同步資料到本地後"
+      - "使用 devise-two-factor gem"
+      - "本地 seeds 與 Production 資料混用"
+
+applicability:
+  projects:
+    - "core_web"
+    - "sf_project"
+    - "*"
+  languages:
+    - "ruby"
+  frameworks:
+    - "rails"
+    - "devise"
+
+investigation_path:
+  steps:
+    - order: 1
+      action: "確認本地用戶的 2FA 狀態"
+      tools:
+        - "Bash"
+      command: "rails runner 'User.find_by(email: \"test@example.com\")&.otp_required_for_login'"
+      expected: "確認是否啟用 2FA"
+
+    - order: 2
+      action: "檢查本地用戶的 OTP secret 來源"
+      tools:
+        - "Bash"
+      command: "rails runner 'puts User.find_by(email: \"test@example.com\")&.encrypted_otp_secret&.first(20)'"
+      expected: "確認 secret 是否來自 Production（加密值會不同）"
+
+    - order: 3
+      action: "比對本地 seeds 中的用戶設定"
+      tools:
+        - "Read"
+      target: "db/seeds.rb 或 db/seeds/*.rb"
+      look_for: "2FA 相關設定、otp_secret 設定"
+
+    - order: 4
+      action: "確認 TOTP 時間同步"
+      tools:
+        - "Bash"
+      command: "date && rails runner 'puts Time.current'"
+      expected: "系統時間與 Rails 時間一致"
+
+  anti_patterns:
+    - "不要直接在 Production 重設用戶的 2FA，這會影響真實用戶"
+    - "不要嘗試猜測 OTP 碼，每 30 秒會變"
+    - "不要只看 otp_required_for_login，secret 不匹配也會失敗"
+
+root_cause:
+  summary: "本地用戶的 OTP secret 與實際使用的 Authenticator App 不匹配"
+  detailed_explanation: |
+    當從 Production 同步資料到本地時，用戶的 encrypted_otp_secret 也會被同步。
+    但這個 secret 是用 Production 的 encryption key 加密的。
+
+    本地環境通常使用不同的 encryption key（config/credentials），
+    導致解密出來的 OTP secret 與 Production 不同。
+
+    結果：用戶在 Authenticator App 中產生的 OTP 碼，
+    與本地環境期望的 OTP 碼不匹配。
+
+    另一種情況是：
+    - Seeds 建立了測試用戶並設定 2FA
+    - 但開發者在本地使用的 Authenticator App 是綁定 Production 帳號的
+    - 兩邊的 OTP secret 完全不同
+
+  affected_components:
+    - "User model (2FA attributes)"
+    - "config/credentials"
+    - "Devise::TwoFactorAuthentication"
+
+solution:
+  quick_fix:
+    description: "在本地環境停用該用戶的 2FA"
+    code: |
+      # 在 Rails console 執行
+      user = User.find_by(email: "your@email.com")
+      user.update!(
+        otp_required_for_login: false,
+        encrypted_otp_secret: nil,
+        encrypted_otp_secret_iv: nil,
+        otp_backup_codes: nil
+      )
+    warnings:
+      - "這只適用於本地開發環境"
+      - "如果需要測試 2FA 流程，使用 proper_fix"
+
+  proper_fix:
+    description: "為本地環境重新設定 2FA，使用本地的 Authenticator"
+    steps:
+      - step: 1
+        description: "清除現有的 2FA 設定"
+        code: |
+          user = User.find_by(email: "your@email.com")
+          user.update!(
+            otp_required_for_login: false,
+            encrypted_otp_secret: nil,
+            encrypted_otp_secret_iv: nil,
+            otp_backup_codes: nil
+          )
+        file: "Rails console"
+
+      - step: 2
+        description: "重新啟用 2FA 並掃描 QR Code"
+        code: |
+          user.otp_secret = User.generate_otp_secret
+          user.otp_required_for_login = true
+          user.save!
+
+          # 產生 QR Code URI
+          puts user.otp_provisioning_uri(user.email, issuer: 'MyApp-Local')
+        file: "Rails console"
+
+      - step: 3
+        description: "在 Authenticator App 中新增此帳號"
+        code: |
+          # 使用上一步產生的 URI 或 QR Code
+          # 在 Authenticator App 中掃描或輸入
+        file: "Authenticator App"
+
+  verification:
+    - "使用新產生的 OTP 碼登入本地環境"
+    - "確認可以成功通過 2FA 驗證"
+  test_command: "rails runner 'puts User.find_by(email: \"test@example.com\").validate_and_consume_otp!(\"123456\")'"
+
+references:
+  - type: "gem"
+    title: "devise-two-factor gem"
+    url: "https://github.com/tinfoil/devise-two-factor"
+
+  - type: "documentation"
+    title: "Rails Credentials 說明"
+    url: "https://guides.rubyonrails.org/security.html#custom-credentials"
+
+history:
+  - date: "2024-01-15"
+    project: "core_web"
+    task_id: ""
+    notes: "開發者從 Production 同步資料後遇到此問題"

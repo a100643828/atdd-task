@@ -1,0 +1,22 @@
+# AWS 實例配置範例 - 複製為 aws-instances.yml 並填入實際值
+# cp aws-instances.yml.example aws-instances.yml
+instances:
+  core_web:
+    - name: web_1
+      instance_id: i-xxxxxxxxxxxxxxxxx
+      app_dir: /home/apps/your_app
+    - name: Shadow
+      instance_id: i-xxxxxxxxxxxxxxxxx
+      app_dir: /home/apps/your_app
+  sf_project:
+    - name: sf_project
+      instance_id: i-xxxxxxxxxxxxxxxxx
+      app_dir: /home/apps/your_app
+  jv_project:
+    - name: jv_project
+      instance_id: i-xxxxxxxxxxxxxxxxx
+      app_dir: /home/apps/your_app
+  e-trading:
+    - name: e-trading-production
+      instance_id: i-xxxxxxxxxxxxxxxxx
+      app_dir: /home/apps/your_app

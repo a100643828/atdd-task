@@ -1,0 +1,269 @@
+# Requirement Confidence Assessment
+# 需求信心度評估
+# Specist Agent 用於評估需求是否足夠清晰，可進入 specification 階段
+#
+# 計算方式：total = sum(dimension.weight * dimension.score / 100)
+# 滿分 100，各維度 score 為 0~100
+
+version: "2.0"
+
+type: requirement
+agent: specist
+
+# Data Sources
+# Specist 評估信心度時必須參考的資料
+data_sources:
+  required:
+    - path: "domains/{project}/domain-map.md"
+      purpose: "識別主要 Domain 與跨域關係"
+    - path: "domains/{project}/ul.md"
+      purpose: "領域語言對照，確認術語一致性"
+    - path: "domains/{project}/business-rules.md"
+      purpose: "跨域商務規則比對"
+    - path: "domains/{project}/strategic/{Domain}.md"
+      purpose: "商務目的、能力、範疇定義、狀態流程、商務依賴"
+  conditional:
+    - path: "domains/{project}/tactical/{Domain}.md"
+      purpose: "已知 Pitfalls、Knowledge Gaps、狀態轉移細節"
+      when: "identified domain has tactical document"
+    - path: "domains/{project}/contexts/{Domain}.md"
+      purpose: "Bounded Context 邊界與整合點"
+      when: "identified domain has context document"
+  excluded:
+    - path: "codebase (app/, db/, config/)"
+      reason: "codebase analysis is coder's responsibility, not specist's"
+
+# Thresholds
+thresholds:
+  proceed: 95            # >= 95% can enter specification phase
+  suggest_clarify: 70    # 70-94% suggest clarification, user may skip
+  must_clarify: 70       # < 70% must clarify, cannot proceed
+
+  interpretation:
+    95_100: "需求充分清晰，可進入規格撰寫"
+    70_94: "大部分清楚，建議澄清扣分項目"
+    50_69: "有顯著模糊地帶，必須澄清"
+    0_49: "需求嚴重不足，需要大量補充"
+
+# Dimensions
+dimensions:
+  scope_boundary_clarity:
+    name: "範疇邊界清晰度"
+    weight: 20
+    description: |
+      需求所涉及的 Domain 邊界是否明確。
+      判斷歸屬哪個 Domain、是否跨域、邊界劃分在哪裡。
+    rationale: |
+      最基礎的判斷。邊界不清會導致後續所有分析建立在錯誤的範圍上，
+      影響規格撰寫、測試設計、實作方向。
+    sources:
+      - "domain-map.md (Domain 列表與關係)"
+      - "strategic/{Domain}.md (範疇定義: Includes/Excludes)"
+      - "contexts/{Domain}.md (Bounded Context 邊界)"
+    deductions:
+      - id: SB-1
+        points: -20
+        cause: "無法判斷需求歸屬哪個 Domain"
+      - id: SB-2
+        points: -15
+        cause: "跨域需求但未明確各 Domain 的責任劃分"
+      - id: SB-3
+        points: -10
+        cause: "Domain 歸屬明確但範疇邊界模糊（不確定 Includes/Excludes）"
+      - id: SB-4
+        points: -5
+        cause: "邊界大致清楚但有個別灰色地帶"
+
+  logical_consistency:
+    name: "邏輯一致性"
+    weight: 20
+    description: |
+      使用者口述需求是否與現有 Domain 知識邏輯一致。
+      新需求有沒有跟既有商務規則矛盾，在現有架構下是否可行。
+    rationale: |
+      與既有規則矛盾代表方向錯誤，越早發現越好。
+      此維度直接影響需求的可行性判斷。
+    sources:
+      - "business-rules.md (既有跨域規則)"
+      - "strategic/{Domain}.md (商務規則、狀態流程)"
+      - "user conversation (口述需求與問答)"
+    deductions:
+      - id: LC-1
+        points: -20
+        cause: "需求與既有商務規則直接矛盾"
+      - id: LC-2
+        points: -15
+        cause: "需求在現有狀態流程下不可行（需改變狀態機）"
+      - id: LC-3
+        points: -10
+        cause: "需求可行但與既有模式不一致，需確認是否為有意變更"
+      - id: LC-4
+        points: -5
+        cause: "大致一致但有個別規則需要確認是否適用"
+
+  business_logic_clarity:
+    name: "商務邏輯清晰度"
+    weight: 20
+    description: |
+      從使用者口述與知識庫的對應，判斷業務規則是否完整、清晰。
+      是否所有涉及的計算、驗證、授權邏輯都已明確。
+    rationale: |
+      商務邏輯是需求的核心。即使邊界清楚、術語一致，
+      如果關鍵業務規則仍模糊，產出的規格仍然不可靠。
+    sources:
+      - "business-rules.md (VR/ST/CR/CD 規則)"
+      - "strategic/{Domain}.md (商務能力、商務規則)"
+      - "ul.md (Entity/VO 的業務規則欄位)"
+    deductions:
+      - id: BL-1
+        points: -20
+        cause: "核心計算邏輯或驗證規則完全未定義"
+      - id: BL-2
+        points: -15
+        cause: "業務規則存在但不完整（缺少關鍵條件或例外處理）"
+      - id: BL-3
+        points: -10
+        cause: "規則大致清楚但有細節待確認（數值、閾值、比例）"
+      - id: BL-4
+        points: -5
+        cause: "規則清楚但知識庫尚未記錄，僅存在於口述確認中"
+
+  edge_case_coverage:
+    name: "邊際情境完整度"
+    weight: 15
+    description: |
+      需求的邊界條件、例外情況是否已釐清。
+      例如：金額為零、數量超限、時間衝突、權限不足等情境。
+    rationale: |
+      Edge case 是實務上最容易遺漏的部分，但相比邊界和邏輯，
+      edge case 可在後續階段補充，因此權重略低。
+    sources:
+      - "strategic/{Domain}.md (狀態流程的異常路徑)"
+      - "tactical/{Domain}.md (Common Pitfalls)"
+      - "business-rules.md (VR 驗證規則的邊界條件)"
+      - "user conversation (問答中的情境確認)"
+    deductions:
+      - id: EC-1
+        points: -15
+        cause: "完全未討論邊際情境，不知道異常情況如何處理"
+      - id: EC-2
+        points: -10
+        cause: "僅討論了 happy path，未確認異常路徑"
+      - id: EC-3
+        points: -8
+        cause: "已知 Pitfall 未被納入需求考量"
+      - id: EC-4
+        points: -5
+        cause: "大部分邊際情境已釐清，但有個別情境未確認"
+
+  impact_scope:
+    name: "影響範圍辨識"
+    weight: 10
+    description: |
+      修改此需求後，對上下游 Domain 的連帶影響是否已盤點。
+      改了 A 會不會影響 B？依賴關係是否清楚？
+    rationale: |
+      需求本身可能很清楚，但沒想到連帶影響是最常見的踩坑來源。
+      權重 10% 因為 specist 能從知識庫判斷，但完整影響需 coder 確認。
+    sources:
+      - "strategic/{Domain}.md (商務依賴: 上游/下游)"
+      - "domain-map.md (Context Mapping 關係圖)"
+      - "business-rules.md (CD 跨域規則)"
+    deductions:
+      - id: IS-1
+        points: -10
+        cause: "跨域影響完全未辨識，不知道會影響哪些下游"
+      - id: IS-2
+        points: -8
+        cause: "知道有跨域影響但未確認影響程度"
+      - id: IS-3
+        points: -5
+        cause: "上下游已盤點但有個別整合點待確認"
+
+  testability:
+    name: "可驗收性"
+    weight: 10
+    description: |
+      需求是否能被轉化為具體的 Given-When-Then 驗收場景。
+      如果寫不出驗收條件，代表需求本身不夠具體。
+    rationale: |
+      ATDD 的核心檢查。Specist 的最終產出是 Given-When-Then 規格，
+      如果需求無法表達為可驗證的場景，信心度應被扣分。
+    sources:
+      - "user conversation (需求是否可量化、可觀察)"
+      - "strategic/{Domain}.md (狀態流程可作為驗收依據)"
+    deductions:
+      - id: TE-1
+        points: -10
+        cause: "需求過於抽象，無法寫出任何具體驗收場景（如「系統要好用」）"
+      - id: TE-2
+        points: -8
+        cause: "可寫出部分場景但關鍵驗收條件不明確（如「要快」但未定義多快）"
+      - id: TE-3
+        points: -5
+        cause: "場景可寫但預期結果不確定（需確認具體數值或狀態）"
+
+  ubiquitous_language_alignment:
+    name: "共同語言一致性"
+    weight: 5
+    description: |
+      使用者口述中的術語是否與 ul.md 定義一致。
+      是否存在同義詞混用或語義歧義。
+    rationale: |
+      術語不一致重要但容易修正，在對話中即時校準即可，
+      不太會成為真正的阻塞點，因此給予最低權重。
+    sources:
+      - "ul.md (Ubiquitous Language 定義)"
+      - "user conversation (口述用詞)"
+    deductions:
+      - id: UL-1
+        points: -5
+        cause: "使用了知識庫中不存在的術語，且無法對應到任何已知概念"
+      - id: UL-2
+        points: -3
+        cause: "術語存在但使用者理解與 ul.md 定義不同"
+      - id: UL-3
+        points: -2
+        cause: "同義詞混用（如「折扣」vs「折價券」），已在對話中澄清"
+
+# Clarification Prompt Template
+clarification_template: |
+  📊 需求信心度：{total_score}%
+
+  | 維度 | 得分 | 權重 | 加權分 | 主要扣分 |
+  |------|------|------|--------|----------|
+  | 範疇邊界清晰度 | {scope_boundary_clarity}% | 20% | {weighted_1} | {deduction_1} |
+  | 邏輯一致性 | {logical_consistency}% | 20% | {weighted_2} | {deduction_2} |
+  | 商務邏輯清晰度 | {business_logic_clarity}% | 20% | {weighted_3} | {deduction_3} |
+  | 邊際情境完整度 | {edge_case_coverage}% | 15% | {weighted_4} | {deduction_4} |
+  | 影響範圍辨識 | {impact_scope}% | 10% | {weighted_5} | {deduction_5} |
+  | 可驗收性 | {testability}% | 10% | {weighted_6} | {deduction_6} |
+  | 共同語言一致性 | {ubiquitous_language_alignment}% | 5% | {weighted_7} | {deduction_7} |
+
+  ❓ 需要澄清：
+  1. {question_from_highest_deduction_dimension}
+  2. {question_from_second_highest}
+  3. {question_from_third_highest}
+
+# Example
+example: |
+  需求：新增折價券功能
+
+  初始分析：
+  - scope_boundary_clarity: 80% (SB-3: 折價券歸屬 Billing 還是 Promotion 不確定)
+  - logical_consistency: 90% (LC-4: 需確認折價券是否適用既有結算規則)
+  - business_logic_clarity: 60% (BL-1: 折價券計算邏輯未定義, BL-3: 折扣上限未確認)
+  - edge_case_coverage: 50% (EC-1: 折價券金額 > 商品金額怎麼辦？過期券？疊加使用？)
+  - impact_scope: 70% (IS-2: 可能影響發票和 ERP 結算，程度不確定)
+  - testability: 85% (TE-3: 預期折扣金額的計算規則待確認)
+  - ubiquitous_language_alignment: 90% (UL-3: 「折扣」vs「折價券」已澄清)
+
+  加權總分：
+  80*0.20 + 90*0.20 + 60*0.20 + 50*0.15 + 70*0.10 + 85*0.10 + 90*0.05
+  = 16 + 18 + 12 + 7.5 + 7 + 8.5 + 4.5
+  = 73.5%
+
+  需要澄清：
+  1. 折價券金額超過商品價值時如何處理？是否允許負數餘額？(edge_case_coverage)
+  2. 折價券的計算規則？固定金額 or 百分比？是否有折扣上限？(business_logic_clarity)
+  3. 折價券歸屬哪個 Domain？Billing 的一部分還是獨立的 Promotion Domain？(scope_boundary_clarity)

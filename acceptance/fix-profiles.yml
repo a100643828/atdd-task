@@ -1,0 +1,693 @@
+# Fix Profiles Registry
+#
+# 用途：定義 Fix 任務的驗收類型與工具使用
+# 設計原則：兩階段分類
+#   1. Fix Profile (Discovery Source) - 任務建立時決定
+#   2. Affected Layer (Diagnosis) - 調查後確定
+#
+# 核心原則：Production 資料不可變
+#   - Query: 只能讀取，不改變任何狀態
+#   - Command: 可改變狀態，但僅限 Local/Staging
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Stage 1: Fix Profiles (按發現來源分類)
+# ═══════════════════════════════════════════════════════════════════════════════
+# 任務建立時選擇，決定初始調查工具
+
+fix_profiles:
+  ui:
+    name: "頁面/UI 問題"
+    description: "從頁面發現的顯示或互動問題"
+    keywords:
+      - "畫面"
+      - "顯示"
+      - "頁面"
+      - "按鈕"
+      - "表單"
+      - "跑版"
+      - "CSS"
+      - "前端"
+    examples:
+      - "發票金額顯示 NaN"
+      - "按鈕點了沒反應"
+      - "表單送出後沒有反饋"
+      - "手機版跑版"
+    initial_investigation:
+      required:
+        - browser
+        - read.local_codebase
+      optional:
+        - debugger
+    possible_layers:
+      - presentation
+      - application
+      - domain
+
+  data:
+    name: "資料問題"
+    description: "從報表或資料庫發現的資料錯誤"
+    keywords:
+      - "資料"
+      - "報表"
+      - "數字"
+      - "統計"
+      - "遺失"
+      - "重複"
+      - "不一致"
+    examples:
+      - "報表數字加總不對"
+      - "訂單資料遺失"
+      - "狀態不同步"
+      - "資料重複建立"
+    initial_investigation:
+      required:
+        - aws_connect.rails_runner
+        - read.domain_context
+      optional:
+        - aws_connect.rds_log
+        - migrate
+    possible_layers:
+      - domain
+      - infrastructure
+
+  worker:
+    name: "背景任務問題"
+    description: "從 Sidekiq/排程介面發現的任務錯誤"
+    keywords:
+      - "Sidekiq"
+      - "Job"
+      - "Queue"
+      - "Worker"
+      - "排程"
+      - "背景"
+      - "非同步"
+    examples:
+      - "Sidekiq job 持續失敗"
+      - "排程任務沒執行"
+      - "Queue 堆積"
+      - "Job timeout"
+    initial_investigation:
+      required:
+        - aws_connect.app_status
+        - aws_connect.server_log
+      optional:
+        - error_tracking
+        - aws_connect.rails_runner
+    possible_layers:
+      - application
+      - domain
+      - infrastructure
+
+  performance:
+    name: "效能問題"
+    description: "從監控或用戶回報發現的效能問題"
+    keywords:
+      - "慢"
+      - "timeout"
+      - "效能"
+      - "memory"
+      - "CPU"
+      - "N+1"
+      - "slow query"
+    examples:
+      - "頁面載入超過 10 秒"
+      - "API timeout"
+      - "Memory 持續上升"
+      - "資料庫 slow query"
+    initial_investigation:
+      required:
+        - apm
+        - aws_connect.server_log
+      optional:
+        - aws_connect.rds_log
+        - read.local_codebase
+    possible_layers:
+      - presentation
+      - application
+      - domain
+      - infrastructure
+
+  integration:
+    name: "外部服務整合問題"
+    description: "與第三方服務串接相關的錯誤"
+    keywords:
+      - "API"
+      - "串接"
+      - "金流"
+      - "ERP"
+      - "Webhook"
+      - "第三方"
+      - "外部"
+    examples:
+      - "金流回傳失敗"
+      - "ERP 同步錯誤"
+      - "Webhook 收不到"
+      - "Email 寄不出去"
+    initial_investigation:
+      required:
+        - error_tracking
+        - aws_connect.server_log
+      optional:
+        - aws_connect.script
+        - read.local_codebase
+    possible_layers:
+      - infrastructure
+
+  alert:
+    name: "監控警報問題"
+    description: "從 Log 或監控系統發現的錯誤"
+    keywords:
+      - "Log"
+      - "Error"
+      - "Alert"
+      - "監控"
+      - "Rollbar"
+      - "Sentry"
+    examples:
+      - "Error log 突然增加"
+      - "Sentry 新錯誤類型"
+      - "特定錯誤重複出現"
+    initial_investigation:
+      required:
+        - error_tracking
+        - aws_connect.server_log
+      optional:
+        - aws_connect.rails_runner
+        - read.local_codebase
+    possible_layers:
+      - presentation
+      - application
+      - domain
+      - infrastructure
+
+  security:
+    name: "安全/權限問題"
+    description: "權限錯誤或安全漏洞"
+    keywords:
+      - "權限"
+      - "登入"
+      - "授權"
+      - "安全"
+      - "XSS"
+      - "注入"
+    examples:
+      - "用戶無法存取應有權限"
+      - "未授權存取"
+      - "安全掃描發現漏洞"
+    initial_investigation:
+      required:
+        - read.local_codebase
+        - aws_connect.server_log
+      optional:
+        - browser
+        - error_tracking
+    possible_layers:
+      - application
+      - infrastructure
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Stage 2: Affected Layers (按架構層分類)
+# ═══════════════════════════════════════════════════════════════════════════════
+# 調查後確定，決定修復工具與測試類型
+
+affected_layers:
+  presentation:
+    name: "Presentation Layer"
+    aliases:
+      - "View"
+      - "UI"
+      - "Frontend"
+    description: "View/UI 層問題，包含模板、CSS、前端 JS"
+    architecture_mapping:
+      clean_architecture: "Frameworks & Drivers (UI)"
+      ddd: "Presentation Layer"
+      mvc: "View"
+    code_locations:
+      rails:
+        - "app/views/**/*"
+        - "app/assets/**/*"
+        - "app/javascript/**/*"
+        - "app/helpers/**/*"
+    examples:
+      - "ERB template 語法錯誤"
+      - "CSS 跑版"
+      - "JavaScript 錯誤"
+      - "Helper method 錯誤"
+    investigation_tools:
+      - browser
+      - browser.devtools
+      - read.local_codebase
+    fix_tools:
+      - write
+    verify_tools:
+      - browser
+      - bash.rspec_system
+    test_type: "system"
+    test_focus:
+      - "頁面顯示正確"
+      - "互動行為正確"
+
+  application:
+    name: "Application Layer"
+    aliases:
+      - "Controller"
+      - "Use Case"
+      - "Service"
+    description: "Controller/Use Case 層問題，包含流程控制、參數處理"
+    architecture_mapping:
+      clean_architecture: "Use Cases / Interface Adapters"
+      ddd: "Application Layer"
+      mvc: "Controller"
+    code_locations:
+      rails:
+        - "app/controllers/**/*"
+        - "domains/**/use_cases/**/*"
+        - "domains/**/services/**/*"
+    examples:
+      - "參數傳遞錯誤"
+      - "流程控制錯誤"
+      - "權限檢查遺漏"
+      - "Transaction 處理錯誤"
+    investigation_tools:
+      - read.local_codebase
+      - debugger
+      - aws_connect.server_log
+    fix_tools:
+      - write
+    verify_tools:
+      - bash.rspec_request
+      - bash.rspec_integration
+    test_type: "integration"
+    test_focus:
+      - "流程正確執行"
+      - "錯誤正確處理"
+      - "權限正確檢查"
+
+  domain:
+    name: "Domain Layer"
+    aliases:
+      - "Model"
+      - "Business Logic"
+      - "Entity"
+    description: "Domain/Business Logic 層問題，包含計算邏輯、業務規則"
+    architecture_mapping:
+      clean_architecture: "Entities / Use Cases"
+      ddd: "Domain Layer"
+      mvc: "Model"
+    code_locations:
+      rails:
+        - "domains/**/entities/**/*"
+        - "domains/**/value_objects/**/*"
+        - "domains/**/domain_services/**/*"
+        - "app/models/**/*"
+    examples:
+      - "計算邏輯錯誤"
+      - "業務規則錯誤"
+      - "狀態轉換錯誤"
+      - "驗證規則錯誤"
+    investigation_tools:
+      - read.domain_context
+      - read.local_codebase
+      - debugger
+    fix_tools:
+      - write
+    verify_tools:
+      - bash.rspec_unit
+    test_type: "unit"
+    test_focus:
+      - "計算結果正確"
+      - "業務規則符合"
+      - "邊界條件處理"
+
+  infrastructure:
+    name: "Infrastructure Layer"
+    aliases:
+      - "Repository"
+      - "Adapter"
+      - "External"
+    description: "Infrastructure 層問題，包含資料存取、外部服務串接"
+    architecture_mapping:
+      clean_architecture: "Frameworks & Drivers (DB, External)"
+      ddd: "Infrastructure Layer"
+      mvc: "Model (persistence)"
+    code_locations:
+      rails:
+        - "domains/**/repositories/**/*"
+        - "domains/**/adapters/**/*"
+        - "domains/**/clients/**/*"
+        - "app/jobs/**/*"
+        - "app/mailers/**/*"
+    examples:
+      - "Repository 查詢錯誤"
+      - "外部 API 串接錯誤"
+      - "資料庫連線問題"
+      - "快取處理錯誤"
+      - "Job 執行錯誤"
+    investigation_tools:
+      - aws_connect.rails_runner
+      - aws_connect.rds_log
+      - aws_connect.server_log
+      - error_tracking
+    fix_tools:
+      - write
+    verify_tools:
+      - bash.rspec_integration
+      - bash.rails_runner
+    test_type: "integration"
+    test_focus:
+      - "資料正確存取"
+      - "外部服務正確呼叫"
+      - "錯誤正確處理"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tools Registry (工具註冊表)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tools:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Query Tools (只能讀取，不改變狀態)
+  # ─────────────────────────────────────────────────────────────────────────────
+  query:
+    browser:
+      name: "Browser"
+      description: "Chrome 瀏覽器，用於重現錯誤、確認錯誤內容、驗證修復結果"
+      mcp_tools:
+        - mcp__claude-in-chrome__navigate
+        - mcp__claude-in-chrome__computer
+        - mcp__claude-in-chrome__read_page
+        - mcp__claude-in-chrome__find
+      actions:
+        - reproduce_error
+        - verify_fix
+        - screenshot
+      sub_tools:
+        devtools:
+          name: "Browser DevTools"
+          description: "Network/Console/Application 檢查"
+          mcp_tools:
+            - mcp__claude-in-chrome__read_console_messages
+            - mcp__claude-in-chrome__read_network_requests
+            - mcp__claude-in-chrome__javascript_tool
+
+    aws_connect:
+      name: "AWS Connect"
+      description: "連線到遠端機器進行查詢（Skill）"
+      skill: "aws-operations"
+      constraint: "Query only - 不可執行 Command 行為"
+      sub_tools:
+        rails_runner:
+          name: "Rails Runner (Remote)"
+          description: "遠端執行 Ruby 代碼確認資料狀態"
+          constraint: |
+            必須是 dry-run 模式：
+            - 只能呼叫 Query method
+            - 如果 Class 有 Command 行為，必須手動拆開
+            - 禁止呼叫 save, update, destroy, create 等
+          examples:
+            - "User.find_by(email: 'xxx').inspect"
+            - "Invoice.where(status: 'failed').count"
+        server_log:
+          name: "Server Log"
+          description: "查詢遠端機器各種 log"
+          log_types:
+            - nginx
+            - rails_application
+            - sidekiq
+            - puma
+          examples:
+            - "tail -f log/production.log | grep ERROR"
+            - "journalctl -u sidekiq -n 100"
+        script:
+          name: "Confirmation Script"
+          description: "寫腳本執行確認行為（用完必須刪除）"
+          constraint: "Script 執行後必須刪除，不可留在 Production"
+          workflow:
+            - "撰寫確認腳本"
+            - "上傳到遠端"
+            - "執行確認"
+            - "刪除腳本"
+        rds_log:
+          name: "RDS/Redis Log"
+          description: "查詢 AWS 資料庫服務的 log"
+          services:
+            - rds_slow_query
+            - rds_error_log
+            - redis_monitor
+            - elasticache_log
+        app_status:
+          name: "App Status"
+          description: "應用程式服務狀態確認"
+          checks:
+            - sidekiq_queue
+            - sidekiq_retry
+            - redis_status
+            - puma_status
+
+    read:
+      name: "Read"
+      description: "讀取本地檔案"
+      claude_tool: "Read"
+      sub_tools:
+        local_codebase:
+          name: "Local Codebase"
+          description: "查看本地程式碼理解脈絡"
+        domain_context:
+          name: "Domain Context"
+          description: "查看 Domain 文件理解商業脈絡"
+          locations:
+            - "domains/{project}/ul.md"
+            - "domains/{project}/business-rules.md"
+            - "domains/{project}/contexts/*.md"
+        git_history:
+          name: "Git History"
+          description: "查看 Git 歷史追溯問題"
+          commands:
+            - "git log"
+            - "git blame"
+            - "git bisect"
+            - "git diff"
+
+    error_tracking:
+      name: "Error Tracking"
+      description: "查詢錯誤追蹤服務"
+      services:
+        - sentry
+        - rollbar
+        - bugsnag
+      data_available:
+        - stack_trace
+        - error_frequency
+        - affected_users
+        - first_seen
+        - last_seen
+
+    apm:
+      name: "APM"
+      description: "Application Performance Monitoring"
+      services:
+        - newrelic
+        - datadog
+        - scout
+      data_available:
+        - response_time
+        - throughput
+        - error_rate
+        - slow_queries
+        - memory_usage
+
+    git_query:
+      name: "Git Query"
+      description: "Git 讀取操作"
+      claude_tool: "Bash"
+      commands:
+        - "git status"
+        - "git log"
+        - "git diff"
+        - "git blame"
+        - "git show"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Command Tools (可改變狀態，僅限 Local/Staging)
+  # ─────────────────────────────────────────────────────────────────────────────
+  command:
+    write:
+      name: "Write"
+      description: "修改本地程式碼"
+      claude_tool: "Write"
+      target: "local_codebase_only"
+      constraint: "只能修改 Local 檔案，不可直接修改 Production"
+
+    bash:
+      name: "Bash"
+      description: "執行本地命令"
+      claude_tool: "Bash"
+      sub_tools:
+        rspec:
+          name: "RSpec"
+          description: "執行 Ruby 測試"
+          workflow: "PreTest (紅燈) → Fix → Test (綠燈)"
+          commands:
+            unit: "bundle exec rspec {spec_file} --tag unit"
+            integration: "bundle exec rspec {spec_file} --tag integration"
+            system: "bundle exec rspec {spec_file} --tag system"
+            request: "bundle exec rspec {spec_file} --tag request"
+        rails_runner:
+          name: "Rails Runner (Local)"
+          description: "本地執行 Ruby 代碼"
+          constraint: "只在 Local/Test 環境執行"
+          examples:
+            - "rails runner 'puts Invoice.last.inspect'"
+        db_console:
+          name: "Database Console (Local)"
+          description: "本地資料庫操作"
+          commands:
+            - "rails dbconsole"
+            - "psql"
+            - "mysql"
+        cache_clear:
+          name: "Cache Clear (Local)"
+          description: "清除本地快取"
+          commands:
+            - "rails cache:clear"
+            - "redis-cli FLUSHDB"
+        sidekiq_local:
+          name: "Sidekiq (Local)"
+          description: "本地 Sidekiq 操作"
+          commands:
+            - "bundle exec sidekiq"
+            - "Sidekiq::Queue.new.clear"
+
+    migrate:
+      name: "Migrate"
+      description: "資料遷移（Prod → Local）"
+      skill: "aws-operations"
+      direction: "prod_to_local_only"
+      constraint: |
+        嚴禁反向操作！
+        ✅ 允許：Production → Staging/Local
+        ❌ 禁止：Local/Staging → Production
+      workflow:
+        - "確認要 dump 的資料範圍"
+        - "從 Production dump 資料"
+        - "匯入到 Local/Staging"
+        - "驗證資料完整性"
+
+    git_command:
+      name: "Git Command"
+      description: "Git 寫入操作"
+      claude_tool: "Bash"
+      commands:
+        - "git add"
+        - "git commit"
+        - "git push"
+      note: "push 後需要人類確認部署"
+
+    debugger:
+      name: "Debugger"
+      description: "中斷點除錯"
+      tools:
+        ruby:
+          - byebug
+          - pry
+          - "binding.irb"
+        javascript:
+          - "debugger"
+          - "console.log"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Forbidden Operations (禁止操作)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+forbidden:
+  - operation: "Write to Production Database"
+    reason: "Production 資料不可變"
+
+  - operation: "Migrate Local to Production"
+    reason: "禁止反向遷移"
+
+  - operation: "Execute Command on Production"
+    reason: "Production 只能 Query"
+
+  - operation: "Delete Production Data"
+    reason: "Production 資料不可刪除"
+
+  - operation: "Direct Production Hotfix"
+    reason: "必須經過完整 Fix 流程"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Fix Workflow (修復流程)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+workflow:
+  phases:
+    - name: "1. 任務建立"
+      agent: "orchestrator"
+      actions:
+        - "選擇 Fix Profile (Discovery Source)"
+        - "記錄問題描述"
+        - "建立任務 JSON"
+      output:
+        fix_profile: "ui|data|worker|performance|integration|alert|security"
+
+    - name: "2. 調查階段"
+      agent: "specist"
+      actions:
+        - "使用 initial_investigation tools"
+        - "重現問題"
+        - "追蹤問題根因"
+        - "確定 Affected Layer"
+      output:
+        affected_layer: "presentation|application|domain|infrastructure"
+        root_cause: "問題根因描述"
+        confidence: "0-100%"
+
+    - name: "3. 測試階段"
+      agent: "tester"
+      actions:
+        - "根據 affected_layer 決定測試類型"
+        - "撰寫 PreTest（預期失敗）"
+        - "執行確認紅燈"
+      output:
+        test_file: "測試檔案路徑"
+        test_type: "unit|integration|system"
+        pretest_result: "red"
+
+    - name: "4. 修復階段"
+      agent: "coder"
+      actions:
+        - "使用 fix_tools 修改程式碼"
+        - "執行測試確認綠燈"
+        - "執行相關測試確認無 regression"
+      output:
+        modified_files: ["修改的檔案"]
+        test_result: "green"
+
+    - name: "5. 驗證階段"
+      agent: "coder"
+      actions:
+        - "使用 verify_tools 驗證修復"
+        - "如有 UI 問題，用 Browser 確認"
+        - "如有資料問題，用 rails_runner 確認"
+      output:
+        verification_result: "passed|failed"
+
+    - name: "6. 審查階段"
+      agent: "risk-reviewer"
+      actions:
+        - "檢查安全風險"
+        - "檢查效能影響"
+        - "檢查是否引入新問題"
+      output:
+        review_result: "approved|needs_fix"
+
+    - name: "7. 完成階段"
+      agent: "gatekeeper"
+      actions:
+        - "彙總測試結果"
+        - "確認所有門檻通過"
+        - "提供人工驗收指南"
+        - "Git commit & push"
+        - "通知人類部署"
+      output:
+        decision: "GO|NO-GO"
+        human_verification_guide: "人工驗收指南"

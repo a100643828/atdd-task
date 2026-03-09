@@ -1,0 +1,13 @@
+# 專案配置範例 - 複製為 projects.yml 並修改路徑
+# cp projects.yml.example projects.yml
+projects:
+  my_project:
+    path: /path/to/your/project
+    ruby: "3.2.x"
+    rails: "7.x"
+  my_frontend:
+    path: /path/to/your/frontend
+    node: "18.x"
+  my_python_project:
+    path: /path/to/your/python-project
+    python: "3.11.x"

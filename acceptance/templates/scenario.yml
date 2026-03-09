@@ -1,0 +1,182 @@
+# Test Scenario Template
+#
+# 用途：定義單一測試場景
+# 使用者：specist/tester 生成、tester 執行
+#
+# 複製此檔案到：tests/{project_id}/{test_id}/scenarios/S{n}-{name}.yml
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 場景基本資訊
+# ═══════════════════════════════════════════════════════════════════════════════
+id: "S1"
+title: "{場景標題}"
+description: |
+  {場景詳細描述}
+
+priority: "high"                    # high | medium | low
+tags: []                            # 標籤，如 ["login", "form", "critical-path"]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Given（前置條件）
+# ═══════════════════════════════════════════════════════════════════════════════
+given:
+  description: |
+    {前置條件描述}
+
+  # 需要的資料
+  data:
+    - entity: "EntityName"
+      identifier: { field: "value" }
+      attributes:
+        attr1: "value1"
+
+  # 需要的狀態
+  state:
+    - condition: "用戶已登入"
+      setup: "login_as_test_user"
+    - condition: "資料已建立"
+      setup: "create_test_data"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# When（執行步驟）
+# ═══════════════════════════════════════════════════════════════════════════════
+steps:
+  - id: 1
+    description: "步驟描述"
+
+    # 動作定義
+    action:
+      type: "navigate"              # navigate | click | input | type | wait | scroll | find
+      target: "/path/to/page"
+      # 或 selector: "button.submit"
+      # 或 value: "輸入值"
+
+    # 等待條件（可選）
+    waitFor:
+      type: "element_visible"       # element_visible | text_visible | url_change | timeout
+      selector: ".page-loaded"
+      timeout: 5000
+
+    # 預期結果
+    expected:
+      type: "text_visible"          # text_visible | element_exists | url_contains | value_equals | element_not_exists
+      selector: ".success"
+      contains: "成功"
+
+    # 截圖設定
+    screenshot:
+      capture: true
+      name: "S1-01-{step_name}.png"
+      timing: "after"               # before | after | both
+
+    # 錯誤處理
+    onError:
+      action: "continue"            # continue | pause | stop
+      screenshot: true
+
+  - id: 2
+    description: "登入系統"
+    action:
+      type: "navigate"
+      target: "/login"
+    expected:
+      type: "element_exists"
+      selector: "form.login"
+    screenshot:
+      capture: true
+      name: "S1-02-login_page.png"
+
+  - id: 3
+    description: "填寫登入表單"
+    actions:                        # 多個動作
+      - type: "input"
+        selector: "input[name='email']"
+        value: "${credentials.email}"
+      - type: "input"
+        selector: "input[name='password']"
+        value: "${credentials.password}"
+      - type: "click"
+        selector: "button[type='submit']"
+    expected:
+      type: "url_contains"
+      value: "/dashboard"
+    screenshot:
+      capture: true
+      name: "S1-03-after_login.png"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Then（預期結果）
+# ═══════════════════════════════════════════════════════════════════════════════
+then:
+  - id: 1
+    description: "頁面顯示正確"
+    verification:
+      type: "visual"                # visual | database | api | console | manual
+      selector: ".main-content"
+      assertion: "contains"         # contains | equals | exists | not_exists | matches
+      value: "預期內容"
+
+    screenshot:
+      capture: true
+      name: "S1-then-01-result.png"
+
+  - id: 2
+    description: "資料庫狀態正確"
+    verification:
+      type: "database"
+      model: "EntityName"
+      query:
+        field: "value"
+      expected:
+        status: "expected_status"
+
+  - id: 3
+    description: "需人工確認"
+    verification:
+      type: "manual"
+      instruction: |
+        請確認以下項目：
+        1. 畫面顯示正確
+        2. 功能運作正常
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 執行結果（tester 執行後填入）
+# ═══════════════════════════════════════════════════════════════════════════════
+result:
+  status: null                      # passed | failed | skipped
+  startedAt: null
+  completedAt: null
+  duration: null
+
+  # 各步驟執行結果
+  stepResults: []
+  # 範例：
+  # - id: 1
+  #   status: "passed"
+  #   screenshot: "screenshots/S1-01-xxx.png"
+  #   timestamp: "ISO_timestamp"
+
+  # 驗證結果
+  verificationResults: []
+  # 範例：
+  # - id: 1
+  #   status: "passed"
+  #   actual: "實際值"
+  #   expected: "預期值"
+
+  # 錯誤資訊（如果失敗）
+  error:
+    step: null
+    message: null
+    screenshot: null
+    details: null
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 場景變數（可在步驟中使用 ${varName} 引用）
+# ═══════════════════════════════════════════════════════════════════════════════
+variables:
+  credentials:
+    email: "test@example.com"
+    password: "password"
+  testData:
+    invoiceId: null                 # 由 setup 腳本設定

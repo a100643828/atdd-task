@@ -1,0 +1,191 @@
+# Debug Tips Tag Taxonomy
+# 統一的標籤分類法，確保任務和 debug-tips 可以快速匹配
+
+version: "1.0"
+
+# 標籤匹配規則
+matching:
+  # 匹配分數計算
+  scoring:
+    exact_match: 10      # 完全匹配
+    category_match: 5    # 同類別匹配
+    partial_match: 2     # 部分匹配（子字串）
+
+  # 最低匹配門檻
+  threshold: 15          # 達到此分數才顯示 tip
+
+  # 優先順序（高優先 tag 匹配加權）
+  priority_weights:
+    error_pattern: 3.0   # 錯誤訊息匹配權重最高
+    domain: 2.0          # Domain 匹配次之
+    layer: 1.5           # 層級匹配
+    technology: 1.0      # 技術匹配
+
+# 標籤類別定義
+categories:
+
+  # 1. Fix Profile（問題類型）- 對應 fix-profiles.yml
+  fix_profile:
+    description: "問題類型分類"
+    tags:
+      - ui            # 頁面/介面問題
+      - data          # 資料問題
+      - worker        # 背景任務問題
+      - performance   # 效能問題
+      - integration   # 外部服務整合問題
+      - alert         # 監控警報問題
+      - security      # 安全/權限問題
+
+  # 2. Affected Layer（影響層級）- 對應 fix-profiles.yml
+  layer:
+    description: "受影響的架構層級"
+    tags:
+      - presentation   # View, Controller, ViewModel
+      - application    # UseCase, Service, Worker
+      - domain         # Entity, ValueObject, Repository
+      - infrastructure # Adapter, Gateway, External API
+
+  # 3. Domain（業務領域）- 專案特定
+  domain:
+    description: "業務領域（與 tasks/*/domains/ 對應）"
+    examples:
+      sf_project:
+        - Accounting
+        - AccountsReceivable
+        - AccountsPayable
+        - Receipt
+        - Invoice
+        - ProjectFund
+        - DigiwinErp
+        - ElectricMeter
+      core_web:
+        - ElectricityBilling
+        - PowerPlant
+        - Contract
+        - User
+        - Authentication
+
+  # 4. Technology（技術棧）
+  technology:
+    description: "使用的技術/框架/Gem"
+    tags:
+      # Ruby/Rails
+      - rails
+      - activerecord
+      - sidekiq
+      - devise
+      - dry-monads
+      - dry-validation
+      - pundit
+      - aasm
+      # JavaScript/Frontend
+      - react
+      - nextjs
+      - typescript
+      # Database
+      - postgresql
+      - redis
+      - elasticsearch
+      # External Services
+      - aws
+      - ecpay
+      - digiwin
+
+  # 5. Error Pattern（錯誤模式）
+  error_pattern:
+    description: "常見錯誤訊息關鍵字"
+    tags:
+      # Ruby 錯誤
+      - undefined_method
+      - nil_class
+      - record_not_found
+      - validation_failed
+      - timeout
+      - connection_refused
+      # Rails 錯誤
+      - routing_error
+      - missing_template
+      - parameter_missing
+      # Auth 錯誤
+      - authentication_failed
+      - unauthorized
+      - forbidden
+      - invalid_token
+      - otp_failed
+      # Data 錯誤
+      - duplicate_key
+      - foreign_key_violation
+      - null_violation
+      - deadlock
+
+  # 6. Symptom（症狀描述）
+  symptom:
+    description: "問題的外顯症狀"
+    tags:
+      # 功能症狀
+      - page_blank
+      - page_error
+      - button_not_working
+      - form_not_submitting
+      - data_not_saving
+      - data_inconsistent
+      # 效能症狀
+      - slow_response
+      - high_memory
+      - high_cpu
+      - n_plus_one
+      # 背景任務症狀
+      - job_failed
+      - job_stuck
+      - job_retry
+      - queue_backed_up
+      # 認證症狀
+      - login_failed
+      - session_expired
+      - permission_denied
+
+# 任務 → Tags 自動生成規則
+auto_tagging:
+  # 從任務 JSON 自動提取 tags
+  from_task:
+    - field: "type"
+      maps_to: "fix_profile"
+      transform: |
+        fix → 從 context.background 推斷 fix_profile
+        feature → 不適用
+        refactor → 不適用
+
+    - field: "domain"
+      maps_to: "domain"
+      transform: "直接使用"
+
+    - field: "context.modifiedFiles"
+      maps_to: "layer"
+      transform: |
+        slices/**/views/ → presentation
+        slices/**/view_models/ → presentation
+        slices/**/controllers/ → presentation
+        domains/**/use_cases/ → application
+        domains/**/services/ → application
+        domains/**/workers/ → application
+        domains/**/models/ → domain
+        domains/**/entities/ → domain
+        domains/**/repositories/ → domain
+        lib/adapters/ → infrastructure
+        lib/gateways/ → infrastructure
+
+    - field: "context.background"
+      maps_to: "error_pattern"
+      transform: "從錯誤訊息提取關鍵字"
+
+# Debug Tip 必要 tags
+required_tags:
+  - fix_profile      # 至少一個問題類型
+  - layer            # 至少一個影響層級
+
+# 建議 tags
+recommended_tags:
+  - domain           # 如果是專案特定問題
+  - technology       # 相關技術
+  - error_pattern    # 錯誤訊息關鍵字
+  - symptom          # 外顯症狀

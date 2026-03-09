@@ -1,0 +1,648 @@
+# Fix Tools Registry
+#
+# 用途：定義 Fix 任務可使用的工具與 Skill
+# 分類原則：
+#   - Query: 只能讀取，不改變任何狀態
+#   - Command: 可改變狀態，僅限 Local/Staging
+#
+# 核心原則：Production 資料不可變
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Query Tools (只讀取，不改變狀態)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+query_tools:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 1. Browser - 瀏覽器操作
+  # ───────────────────────────────────────────────────────────────────────────
+  browser:
+    id: "browser"
+    name: "Browser"
+    type: "mcp"
+    category: "query"
+    description: "Chrome 瀏覽器，用於重現錯誤、確認錯誤內容、驗證修復結果"
+
+    capabilities:
+      reproduce_error:
+        description: "重現用戶回報的問題"
+        tools:
+          - mcp__claude-in-chrome__navigate
+          - mcp__claude-in-chrome__computer
+          - mcp__claude-in-chrome__form_input
+        workflow:
+          - "取得 tab context"
+          - "導航到問題頁面"
+          - "執行觸發錯誤的操作"
+          - "截圖記錄"
+
+      verify_fix:
+        description: "驗證修復結果"
+        tools:
+          - mcp__claude-in-chrome__navigate
+          - mcp__claude-in-chrome__read_page
+          - mcp__claude-in-chrome__find
+        workflow:
+          - "導航到修復後的頁面"
+          - "確認錯誤已消失"
+          - "確認功能正常"
+          - "截圖記錄"
+
+      inspect_page:
+        description: "檢查頁面狀態"
+        tools:
+          - mcp__claude-in-chrome__read_page
+          - mcp__claude-in-chrome__read_console_messages
+          - mcp__claude-in-chrome__read_network_requests
+          - mcp__claude-in-chrome__javascript_tool
+
+      record_session:
+        description: "錄製操作過程"
+        tools:
+          - mcp__claude-in-chrome__gif_creator
+        workflow:
+          - "start_recording"
+          - "執行操作步驟"
+          - "stop_recording"
+          - "export GIF"
+
+    constraints:
+      - "不可在 Browser 中執行會改變 Production 資料的操作"
+      - "如需登入，使用測試帳號"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 2. AWS Connect - 遠端機器連線 (Skill)
+  # ───────────────────────────────────────────────────────────────────────────
+  aws_connect:
+    id: "aws_connect"
+    name: "AWS Connect"
+    type: "skill"
+    skill_name: "aws-operations"
+    category: "query"
+    description: "連線到遠端機器進行查詢"
+
+    sub_tools:
+      # 2.1 Rails Runner (Remote)
+      rails_runner_remote:
+        id: "aws_connect.rails_runner"
+        name: "Rails Runner (Remote)"
+        description: "遠端執行 Ruby 代碼確認資料狀態"
+
+        allowed_operations:
+          - "Model.find / find_by / where"
+          - "Model.count / sum / average"
+          - "Model.first / last"
+          - "instance.inspect / attributes"
+          - "讀取 association"
+
+        forbidden_operations:
+          - "Model.create / new.save"
+          - "Model.update / update_all"
+          - "Model.destroy / destroy_all / delete"
+          - "任何會觸發 callback 並改變資料的操作"
+          - "ActiveRecord::Base.connection.execute (DDL/DML)"
+
+        dry_run_pattern: |
+          # 如果需要測試某個 method 是否有 side effect：
+          # 1. 先檢查 method 內容
+          # 2. 如果有 save/update/destroy，手動拆開只執行 query 部分
+          #
+          # 範例：
+          # 原本想執行：InvoiceService.new(invoice).void!
+          # 拆開執行：
+          #   invoice = Invoice.find(xxx)
+          #   invoice.can_void?  # 只檢查條件，不執行
+          #   invoice.void_reason  # 只讀取屬性
+
+        examples:
+          safe:
+            - "User.find_by(email: 'test@example.com').inspect"
+            - "Invoice.where(status: 'failed').count"
+            - "Project.find(123).invoices.pluck(:serial, :status)"
+          dangerous:
+            - "Invoice.find(123).update(status: 'voided')  # ❌ 禁止"
+            - "User.destroy_all  # ❌ 禁止"
+
+      # 2.2 Server Log
+      server_log:
+        id: "aws_connect.server_log"
+        name: "Server Log"
+        description: "查詢遠端機器各種 log"
+
+        log_types:
+          nginx:
+            path: "/var/log/nginx/access.log"
+            examples:
+              - "tail -100 /var/log/nginx/access.log"
+              - "grep '500' /var/log/nginx/error.log"
+          rails:
+            path: "/app/log/production.log"
+            examples:
+              - "tail -f log/production.log | grep ERROR"
+              - "grep 'InvoiceService' log/production.log | tail -50"
+          sidekiq:
+            path: "journalctl -u sidekiq"
+            examples:
+              - "journalctl -u sidekiq -n 100 --no-pager"
+              - "journalctl -u sidekiq --since '1 hour ago'"
+          puma:
+            path: "/app/log/puma.log"
+            examples:
+              - "tail -50 log/puma.log"
+
+      # 2.3 Script (確認用)
+      script:
+        id: "aws_connect.script"
+        name: "Confirmation Script"
+        description: "寫腳本執行確認行為（用完必須刪除）"
+
+        workflow:
+          1_create:
+            description: "在 local 撰寫確認腳本"
+            constraint: "腳本只能包含 Query 操作"
+          2_upload:
+            description: "上傳到遠端 /tmp/ 目錄"
+            command: "scp script.rb server:/tmp/"
+          3_execute:
+            description: "執行腳本"
+            command: "rails runner /tmp/script.rb"
+          4_delete:
+            description: "刪除腳本（必要！）"
+            command: "rm /tmp/script.rb"
+
+        template: |
+          # /tmp/confirm_xxx.rb
+          # 確認腳本 - 用完必須刪除
+          #
+          # 目的：{確認什麼}
+          # 建立時間：{timestamp}
+          # 預計刪除：執行後立即刪除
+
+          result = {query_code}
+          puts result.inspect
+
+      # 2.4 RDS/Redis Log
+      rds_log:
+        id: "aws_connect.rds_log"
+        name: "RDS/Redis Log"
+        description: "查詢 AWS 資料庫服務的 log"
+
+        services:
+          rds:
+            slow_query_log:
+              description: "慢查詢 log"
+              access: "AWS Console 或 CLI"
+            error_log:
+              description: "錯誤 log"
+              access: "AWS Console 或 CLI"
+          redis:
+            monitor:
+              description: "Redis 即時監控"
+              command: "redis-cli MONITOR"
+            slowlog:
+              description: "Redis 慢查詢"
+              command: "redis-cli SLOWLOG GET 10"
+
+      # 2.5 App Status
+      app_status:
+        id: "aws_connect.app_status"
+        name: "App Status"
+        description: "應用程式服務狀態確認"
+
+        checks:
+          sidekiq:
+            queue_size:
+              description: "佇列大小"
+              command: "Sidekiq::Queue.new('default').size"
+            retry_size:
+              description: "重試佇列大小"
+              command: "Sidekiq::RetrySet.new.size"
+            failed_jobs:
+              description: "失敗的 jobs"
+              command: "Sidekiq::DeadSet.new.to_a.map(&:item)"
+            processes:
+              description: "Sidekiq 進程狀態"
+              command: "Sidekiq::ProcessSet.new.to_a"
+          redis:
+            info:
+              command: "redis-cli INFO"
+            memory:
+              command: "redis-cli INFO memory"
+          puma:
+            stats:
+              description: "Puma 狀態"
+              access: "pumactl stats"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 3. Read - 讀取本地檔案
+  # ───────────────────────────────────────────────────────────────────────────
+  read:
+    id: "read"
+    name: "Read"
+    type: "claude_tool"
+    claude_tool: "Read"
+    category: "query"
+    description: "讀取本地檔案"
+
+    sub_tools:
+      local_codebase:
+        id: "read.local_codebase"
+        name: "Local Codebase"
+        description: "查看本地程式碼理解脈絡"
+        usage: "理解程式碼結構、追蹤問題"
+
+      domain_context:
+        id: "read.domain_context"
+        name: "Domain Context"
+        description: "查看 Domain 文件理解商業脈絡"
+        locations:
+          - "domains/{project}/ul.md"
+          - "domains/{project}/business-rules.md"
+          - "domains/{project}/contexts/*.md"
+          - "domains/{project}/domain-registry.md"
+        usage: "理解業務規則、Domain 術語"
+
+      git_history:
+        id: "read.git_history"
+        name: "Git History"
+        description: "查看 Git 歷史追溯問題"
+        commands:
+          log:
+            description: "查看提交歷史"
+            example: "git log --oneline -20"
+          blame:
+            description: "追蹤特定行的修改歷史"
+            example: "git blame {file}"
+          bisect:
+            description: "二分法找出問題 commit"
+            example: "git bisect start / git bisect bad / git bisect good {commit}"
+          diff:
+            description: "比較差異"
+            example: "git diff HEAD~5..HEAD -- {file}"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 4. Error Tracking - 錯誤追蹤服務
+  # ───────────────────────────────────────────────────────────────────────────
+  error_tracking:
+    id: "error_tracking"
+    name: "Error Tracking"
+    type: "external_service"
+    category: "query"
+    description: "查詢錯誤追蹤服務"
+    operation_mode: "manual"
+    note: "人工登入 Web UI 查看，將結果回報給 Claude"
+
+    services:
+      sentry:
+        access: "Web UI 或 API"
+        data:
+          - stack_trace
+          - error_frequency
+          - affected_users
+          - browser_info
+          - tags
+      rollbar:
+        access: "Web UI 或 API"
+        data:
+          - occurrence_count
+          - affected_users
+          - deploy_info
+      bugsnag:
+        access: "Web UI 或 API"
+
+    usage:
+      - "取得完整 stack trace"
+      - "了解錯誤發生頻率"
+      - "確認影響範圍（多少用戶）"
+      - "追蹤錯誤首次/最近發生時間"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 5. APM - 效能監控
+  # ───────────────────────────────────────────────────────────────────────────
+  apm:
+    id: "apm"
+    name: "APM"
+    type: "external_service"
+    category: "query"
+    description: "Application Performance Monitoring"
+    operation_mode: "manual"
+    note: "人工登入 Web UI 查看，將結果回報給 Claude"
+
+    services:
+      newrelic:
+        data:
+          - response_time
+          - throughput
+          - error_rate
+          - apdex
+          - slow_transactions
+          - database_time
+      datadog:
+        data:
+          - latency
+          - request_rate
+          - error_rate
+          - infrastructure_metrics
+
+    usage:
+      - "找出慢查詢"
+      - "確認效能瓶頸"
+      - "監控 memory/CPU 使用"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Command Tools (可改變狀態，僅限 Local/Staging)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+command_tools:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 6. Write - 修改程式碼
+  # ───────────────────────────────────────────────────────────────────────────
+  write:
+    id: "write"
+    name: "Write"
+    type: "claude_tool"
+    claude_tools:
+      - "Write"
+      - "Edit"
+    category: "command"
+    description: "修改本地程式碼"
+
+    target: "local_codebase_only"
+
+    constraints:
+      - "只能修改 Local 檔案"
+      - "不可直接修改 Production"
+      - "修改後需要經過完整 CI/CD 流程"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 7. Bash - 本地命令執行
+  # ───────────────────────────────────────────────────────────────────────────
+  bash:
+    id: "bash"
+    name: "Bash"
+    type: "claude_tool"
+    claude_tool: "Bash"
+    category: "command"
+    description: "執行本地命令"
+
+    sub_tools:
+      rspec:
+        id: "bash.rspec"
+        name: "RSpec"
+        description: "執行 Ruby 測試"
+
+        workflow:
+          pretest:
+            description: "修復前先寫測試，預期失敗（紅燈）"
+            command: "cd {project_path} && bundle exec rspec {spec_file}"
+            expected: "red"
+          test:
+            description: "修復後執行測試，預期通過（綠燈）"
+            command: "cd {project_path} && bundle exec rspec {spec_file}"
+            expected: "green"
+          regression:
+            description: "執行相關測試確認無回歸"
+            command: "cd {project_path} && bundle exec rspec {related_specs}"
+
+        test_types:
+          unit:
+            description: "單元測試（Domain Layer）"
+            tag: "--tag unit"
+            location: "spec/domains/**/unit/"
+          integration:
+            description: "整合測試（Infrastructure Layer）"
+            tag: "--tag integration"
+            location: "spec/domains/**/integration/"
+          request:
+            description: "請求測試（Application Layer）"
+            tag: "--tag request"
+            location: "spec/requests/"
+          system:
+            description: "系統測試（Presentation Layer）"
+            tag: "--tag system"
+            location: "spec/system/"
+
+      rails_runner_local:
+        id: "bash.rails_runner"
+        name: "Rails Runner (Local)"
+        description: "本地執行 Ruby 代碼"
+
+        constraint: "只在 Local/Test 環境執行"
+
+        examples:
+          - "cd {project_path} && rails runner 'puts Invoice.last.inspect'"
+          - "cd {project_path} && rails runner 'SomeService.new.call'"
+
+      db_console:
+        id: "bash.db_console"
+        name: "Database Console (Local)"
+        description: "本地資料庫操作"
+
+        commands:
+          rails: "cd {project_path} && rails dbconsole"
+          psql: "psql -d {database}"
+          mysql: "mysql -u root {database}"
+
+      cache_clear:
+        id: "bash.cache_clear"
+        name: "Cache Clear (Local)"
+        description: "清除本地快取"
+
+        commands:
+          rails: "cd {project_path} && rails cache:clear"
+          redis: "redis-cli FLUSHDB"
+          assets: "cd {project_path} && rails assets:clobber"
+
+      sidekiq_local:
+        id: "bash.sidekiq_local"
+        name: "Sidekiq (Local)"
+        description: "本地 Sidekiq 操作"
+
+        commands:
+          start: "cd {project_path} && bundle exec sidekiq"
+          clear_queue: "rails runner 'Sidekiq::Queue.new.clear'"
+          clear_retry: "rails runner 'Sidekiq::RetrySet.new.clear'"
+
+      benchmark:
+        id: "bash.benchmark"
+        name: "Benchmark (Local)"
+        description: "本地效能測試"
+        status: "completed"
+        skill_name: "benchmark"
+        note: "已開發為獨立 Skill"
+
+        commands:
+          rails_benchmark: "cd {project_path} && rails runner 'puts Benchmark.measure { ... }'"
+          ab_test: "ab -n 100 -c 10 http://localhost:3000/path"
+          memory_profiler: "cd {project_path} && rails runner 'require \"memory_profiler\"; MemoryProfiler.report { ... }.pretty_print'"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 8. Migrate - 資料遷移
+  # ───────────────────────────────────────────────────────────────────────────
+  migrate:
+    id: "migrate"
+    name: "Migrate"
+    type: "skill"
+    skill_name: "aws-operations"
+    category: "command"
+    description: "資料遷移（Production → Local/Staging）"
+
+    direction:
+      allowed:
+        - "production → staging"
+        - "production → local"
+      forbidden:
+        - "local → production"
+        - "staging → production"
+        - "local → staging"  # 可能需要討論
+
+    workflow:
+      1_identify:
+        description: "確認要 dump 的資料範圍"
+        questions:
+          - "需要哪些 table？"
+          - "需要什麼時間範圍的資料？"
+          - "是否需要關聯資料？"
+      2_dump:
+        description: "從 Production dump 資料"
+        methods:
+          pg_dump: "pg_dump -t {table} {database} > dump.sql"
+          rails: "rails runner 'dump_script.rb'"
+      3_sanitize:
+        description: "清理敏感資料（如果需要）"
+        examples:
+          - "移除或遮罩 email"
+          - "移除或遮罩電話"
+          - "移除密碼相關欄位"
+      4_import:
+        description: "匯入到 Local/Staging"
+        command: "psql {local_db} < dump.sql"
+      5_verify:
+        description: "驗證資料完整性"
+        checks:
+          - "record count 一致"
+          - "關聯資料存在"
+
+    constraints:
+      - "嚴禁反向操作（Local → Production）"
+      - "敏感資料需要清理"
+      - "大量資料需要分批"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 9. Git Command - Git 寫入操作
+  # ───────────────────────────────────────────────────────────────────────────
+  git_command:
+    id: "git_command"
+    name: "Git Command"
+    type: "claude_tool"
+    claude_tool: "Bash"
+    category: "command"
+    description: "Git 寫入操作"
+
+    commands:
+      add:
+        command: "git add {files}"
+        description: "加入暫存區"
+      commit:
+        command: "git commit -m '{message}'"
+        description: "提交變更"
+      push:
+        command: "git push origin {branch}"
+        description: "推送到遠端"
+        note: "push 後需要人類確認部署"
+
+    workflow:
+      - "git add {modified_files}"
+      - "git commit -m 'fix: {description}'"
+      - "git push origin {branch}"
+      - "通知人類：可以部署了"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 10. Debugger - 除錯工具
+  # ───────────────────────────────────────────────────────────────────────────
+  debugger:
+    id: "debugger"
+    name: "Debugger"
+    type: "in_code"
+    category: "command"
+    description: "中斷點除錯"
+
+    tools:
+      ruby:
+        byebug:
+          insert: "byebug"
+          commands:
+            - "next (n) - 下一行"
+            - "step (s) - 進入 method"
+            - "continue (c) - 繼續執行"
+            - "where (w) - 顯示 call stack"
+        pry:
+          insert: "binding.pry"
+          features:
+            - "ls - 列出可用 method"
+            - "cd - 進入物件"
+            - "show-source - 顯示原始碼"
+        irb:
+          insert: "binding.irb"
+
+    constraint: "除錯完成後必須移除 debugger 代碼"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Skills Required (需要的 Claude Skills)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+skills_required:
+
+  existing:
+    aws-operations:
+      description: "現有的 AWS 操作 Skill"
+      capabilities:
+        - "SSH 連線到 EC2"
+        - "執行遠端命令"
+        - "查看 log"
+      enhancements_needed:
+        - "新增 dry-run 模式提醒"
+        - "新增 Query/Command 分類標示"
+        - "新增 Production 保護機制"
+
+  completed:
+    aws-data-migrate:
+      description: "資料遷移 Skill"
+      status: "completed"
+      location: ".claude/skills/aws-data-migrate/SKILL.md"
+      capabilities:
+        - "從 Production dump 資料"
+        - "自動清理敏感資料"
+        - "匯入到 Local/Staging"
+      safety:
+        - "硬編碼禁止反向遷移"
+        - "自動偵測敏感欄位"
+
+    fix-investigation:
+      description: "Fix 調查 Skill"
+      status: "completed"
+      location: ".claude/skills/fix-investigation/SKILL.md"
+      capabilities:
+        - "整合 error_tracking 查詢"
+        - "整合 APM 查詢"
+        - "自動彙整調查結果"
+
+    production-guard:
+      description: "Production 保護 Skill"
+      status: "completed"
+      location: ".claude/skills/production-guard/SKILL.md"
+      capabilities:
+        - "攔截所有 Production write 操作"
+        - "強制要求確認"
+        - "記錄所有 Production 存取"
+
+    benchmark:
+      description: "本地效能測試 Skill"
+      status: "completed"
+      location: ".claude/skills/benchmark/SKILL.md"
+      capabilities:
+        - "執行時間測量"
+        - "記憶體分析"
+        - "N+1 查詢偵測"
+        - "HTTP 負載測試"
