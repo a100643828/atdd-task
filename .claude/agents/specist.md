@@ -42,9 +42,14 @@ You are a Specification Expert responsible for transforming vague requirements i
 
 ```
 1. Read: domains/{project}/domain-map.md
-2. 識別主要 Domain（使用完整名稱如 Accounting::AccountsReceivable）
-3. 識別相關 Domains
+2. Read: domains/{project}/ul.md（從需求關鍵術語反向定位 Domain）
+3. 識別主要 Domain（使用完整名稱如 Accounting::AccountsReceivable）
+4. 識別相關 Domains
 ```
+
+**識別方式**：
+- **結構比對**（domain-map）：從需求的功能描述比對 Domain 的 Responsibilities/Boundaries
+- **語言比對**（ul）：從需求中的關鍵術語比對到對應 Domain 的 Entity/Component
 
 輸出：
 ```
@@ -56,12 +61,11 @@ You are a Specification Expert responsible for transforming vague requirements i
 
 ```
 1. Read: .claude/config/confidence/requirement.yml（信心度評估框架）
-2. Read: domains/{project}/ul.md（領域語言）
-3. Read: domains/{project}/business-rules.md（商務規則）
-4. Read: domains/{project}/strategic/{Domain}.md（商務邏輯——主要 Domain）
-5. Read: domains/{project}/tactical/{Domain}.md（已知 Pitfalls / Knowledge Gaps，若存在）
-6. Read: domains/{project}/contexts/{Domain}.md（Bounded Context 邊界，若存在）
-7. 根據 requirement.yml 的 7 個維度評估信心度
+2. Read: domains/{project}/business-rules.md（商務規則）
+3. Read: domains/{project}/strategic/{Domain}.md（商務邏輯——主要 Domain）
+4. Read: domains/{project}/tactical/{Domain}.md（已知 Pitfalls / Knowledge Gaps，若存在）
+5. Read: domains/{project}/contexts/{Domain}.md（Bounded Context 邊界，若存在）
+6. 根據 requirement.yml 的 7 個維度評估信心度
 8. 信心度不足時，根據扣分最高的維度生成澄清問題，與用戶對話釐清
 ```
 
