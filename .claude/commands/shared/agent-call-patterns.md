@@ -96,20 +96,20 @@ Done (21 tool uses · 41.9k tokens · 2m 12s)
 
 | 階段 | 可用命令 | 說明 |
 |------|---------|------|
-| requirement | `/continue` | 進入下一階段（specification 或 testing） |
+| requirement | `/continue {task_id}` | 進入下一階段（specification 或 testing） |
 | | `/status` | 查看當前任務進度 |
 | | `/abort` | 放棄當前任務 |
-| specification | `/continue` | 進入 testing 階段 |
+| specification | `/continue {task_id}` | 進入 testing 階段 |
 | | `/status` | 查看當前任務進度 |
 | | `/abort` | 放棄當前任務 |
-| testing | `/continue` | 進入 development 階段（自動化 E2E） |
+| testing | `/continue {task_id}` | 進入 development 階段（自動化 E2E） |
 | | `/e2e-manual` | 標記使用人工 E2E 驗證（僅 E2E required 時） |
 | | `/status` | 查看當前任務進度 |
 | | `/abort` | 放棄當前任務 |
-| development | `/continue` | 進入 review 階段 |
+| development | `/continue {task_id}` | 進入 review 階段 |
 | | `/status` | 查看當前任務進度 |
 | | `/abort` | 放棄當前任務 |
-| review | `/continue` | 進入 gate 階段 |
+| review | `/continue {task_id}` | 進入 gate 階段 |
 | | `/fix-critical` | 修復 Critical 問題（TDD 流程） |
 | | `/fix-high` | 修復 Critical + High 問題（TDD 流程） |
 | | `/fix-all` | 修復所有問題（TDD 流程） |
@@ -121,12 +121,11 @@ Done (21 tool uses · 41.9k tokens · 2m 12s)
 | | `/status` | 查看當前任務進度 |
 | | `/abort` | 放棄當前任務 |
 
-**格式規範**：Agent 報告結尾使用以下格式：
+**格式規範**：Agent 報告結尾使用以下格式（命令必須帶 task_id，讓使用者可在 `/clear` 後直接貼到新對話窗）：
 ```
 🔗 Jira：{jira.url}
-📌 可用命令：
-• /command1     - 說明
-• /command2     - 說明
+📌 下一步：
+• /continue {task_id}     - 進入下一階段
 ```
 
 **Jira 連結規則**：從任務 JSON 的 `jira.url` 取得。若 `jira.issueKey` 為 null（test 任務或 markdown backend），則省略 `🔗 Jira` 行。
