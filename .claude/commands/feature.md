@@ -24,6 +24,8 @@ description: 啟動新功能開發任務（Guided 模式）
 
 ⛔ **步驟 1-6 期間禁止讀取**：domain 知識、既有 requirement/spec、程式碼。這些全部是 specist 的職責。main 只做任務建立，不做需求研究。
 
+8. **Rename 對話**（specist 返回後）：輸出建議命令，格式為 `/rename Feature: {標題}`，方便用戶直接複製貼上重命名對話。
+
 ---
 
 ## 呼叫 specist Agent（Step 7）
