@@ -1,0 +1,27 @@
+services:
+  bot:
+    build: ./bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # atdd-hub repo (server clone, single writer)
+      - ${ATDD_HUB_PATH:-/opt/atdd-hub}:/app/atdd-hub
+      # Claude CLI session persistence (claude login + conversation sessions)
+      - claude-data:/home/app/.claude
+    environment:
+      - ATDD_HUB_PATH=/app/atdd-hub
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - bot
+
+volumes:
+  claude-data:
