@@ -44,3 +44,4 @@ acceptance/fixtures/
 .claude/.knowledge-confirmed
 .DS_Store
 .claude/settings.local.json
+poc/.venv/
