@@ -1,7 +1,7 @@
 ---
 name: aws-data-migrate
 description: 資料遷移工具，從 Production 安全地遷移資料到 Local/Staging 環境。自動清理敏感資料，硬編碼禁止反向遷移。
-version: 1.0.0
+version: 2.0.0
 ---
 
 # AWS Data Migrate
@@ -24,9 +24,10 @@ version: 1.0.0
 
 ## Prerequisites
 
-- AWS CLI 已配置且認證有效
-- 本地資料庫已建立（PostgreSQL）
+- AWS CLI 已配置且認證有效（`aws sts get-caller-identity`）
+- 目標資料庫已建立（PostgreSQL）
 - 有 Production 資料庫的讀取權限
+- SSM 可連線到相關 EC2 instance
 
 ## Instructions
 
@@ -37,16 +38,181 @@ version: 1.0.0
 ```markdown
 📦 資料遷移需求確認
 
-1. 需要遷移的 Table(s)：{tables}
-2. 資料時間範圍：{date_range}
-3. 是否需要關聯資料：{yes/no}
-4. 敏感資料處理方式：{mask/remove/keep}
-5. 目標環境：{local/staging}
+1. 遷移模式：{full_sync / selective}
+2. 目標環境：{local / staging}
+3. 需要遷移的 Table(s)：{all / 指定 tables}
+4. 敏感資料處理：{mask / keep}（Staging 同 VPC 可選 keep）
 
 請確認以上資訊是否正確？
 ```
 
-### 2. 識別敏感欄位
+根據遷移模式選擇對應路徑：
+- **全庫同步（full_sync）** → 走 Path A
+- **選擇性遷移（selective）** → 走 Path B
+
+---
+
+## Path A：全庫同步（Production → Staging）
+
+適用場景：Staging 環境需要完整的 Production 資料副本。
+
+### A1. 前置檢查
+
+```bash
+# 1. 確認 AWS CLI 認證
+aws sts get-caller-identity
+
+# 2. 確認 Production / Staging EC2 都在 running
+aws ec2 describe-instances --instance-ids "$PROD_INSTANCE_ID" "$STAGING_INSTANCE_ID" \
+  --query "Reservations[].Instances[].{Id:InstanceId,State:State.Name}" --output table
+```
+
+### A2. 取得資料庫連線資訊
+
+從兩邊的 `.env` 或 `shared/.env` 取得 DB 連線：
+
+```bash
+# Production DB 連線（從 shared/.env 取得）
+aws ssm send-command --instance-ids "$PROD_INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["cat /home/apps/{app_name}/shared/.env | grep -E \"^(DATABASE_|RAILS_ENV)\""]'
+
+# Staging DB 連線
+aws ssm send-command --instance-ids "$STAGING_INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["cat /home/apps/{app_name}/shared/.env | grep -E \"^(DATABASE_|RAILS_ENV)\""]'
+```
+
+### A3. 測試 RDS 直連
+
+Staging 可能能直連 Production RDS（同 VPC / peering），這樣可以省去檔案傳輸：
+
+```bash
+# 在 Staging EC2 上測試連線 Production RDS
+aws ssm send-command --instance-ids "$STAGING_INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["sudo su - apps -c \"PGPASSWORD={prod_password} psql -h {prod_rds_host} -U {prod_user} -d {db_name} -c \\\"SELECT 1 as test;\\\"\""]'
+```
+
+- **連得上** → 直接在 Staging 上 pg_dump（推薦，省去傳輸步驟）
+- **連不上** → 在 Production dump 後透過 S3 傳輸
+
+### A4. 檢查磁碟空間
+
+**重要：dump 前必須確認磁碟空間足夠（建議可用空間 > dump 預估大小的 1.5 倍）**
+
+```bash
+# 檢查磁碟空間和舊 dump 檔案
+aws ssm send-command --instance-ids "$TARGET_INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["df -h /home/apps && echo --- && ls -lhS /home/apps/*.sql /home/apps/*.sql.gz /home/apps/*.dump 2>/dev/null || echo no dump files"]'
+```
+
+空間不足時，確認後刪除舊的 dump 檔案：
+
+```bash
+# 列出舊檔讓用戶確認後再刪除
+rm -f /home/apps/{app_name}_YYYYMMDD.sql  # 逐一刪除確認過的舊檔
+```
+
+### A5. 執行 pg_dump
+
+**情境一：Staging 直連 Production RDS（推薦）**
+
+```bash
+# 在 Staging EC2 上直接 dump Production RDS
+PGPASSWORD={prod_password} pg_dump \
+  -h {prod_rds_host} -U {prod_user} -d {db_name} \
+  --no-owner --no-acl \
+  -f /home/apps/{app_name}_YYYYMMDD.sql
+```
+
+**情境二：需要傳輸（Staging 無法直連 Production RDS）**
+
+```bash
+# Step 1: 在 Production EC2 上 dump
+PGPASSWORD={prod_password} pg_dump \
+  -h {prod_rds_host} -U {prod_user} -d {db_name} \
+  --no-owner --no-acl \
+  -f /home/apps/{app_name}_YYYYMMDD.sql
+
+# Step 2: 壓縮 + 上傳 S3
+gzip -c /home/apps/{app_name}_YYYYMMDD.sql > /home/apps/{app_name}_YYYYMMDD.sql.gz
+aws s3 cp /home/apps/{app_name}_YYYYMMDD.sql.gz s3://{bucket}/db-backup/
+
+# Step 3: Staging 下載 + 解壓
+aws s3 cp s3://{bucket}/db-backup/{app_name}_YYYYMMDD.sql.gz /home/apps/
+gunzip -f /home/apps/{app_name}_YYYYMMDD.sql.gz
+```
+
+> **注意**：如果 Staging EC2 沒有 S3 權限（403 Forbidden），需要先設定 IAM Role 或改用 scp。
+
+### A6. Drop + Recreate + Restore
+
+**重要：這會清掉 Staging 現有資料，執行前必須確認用戶同意。**
+
+SSM 的多層引號 escape 容易出錯，複雜命令建議用 **JSON 檔 + printf 寫腳本** 的方式：
+
+```bash
+# 在本地建立 SSM 參數檔
+cat > /tmp/ssm-restore-commands.json << 'EOF'
+{
+  "commands": [
+    "printf '#!/bin/bash\\nexport PGPASSWORD={staging_password}\\nexport PGHOST={staging_rds_host}\\nexport PGUSER={staging_user}\\npsql -d postgres -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '\"'\"'{db_name}'\"'\"' AND pid <> pg_backend_pid();\"\\npsql -d postgres -c \"DROP DATABASE IF EXISTS {db_name};\"\\npsql -d postgres -c \"CREATE DATABASE {db_name};\"\\npsql -d {db_name} < /home/apps/{app_name}_YYYYMMDD.sql\\npsql -d {db_name} -c \"SELECT count(*) as table_count FROM information_schema.tables WHERE table_schema = '\"'\"'public'\"'\"' AND table_type = '\"'\"'BASE TABLE'\"'\"';\"\\n' > /tmp/db_restore.sh",
+    "chmod +x /tmp/db_restore.sh",
+    "sudo su - apps -c 'bash /tmp/db_restore.sh 2>&1'"
+  ]
+}
+EOF
+
+# 透過 JSON 檔傳參數給 SSM
+COMMAND_ID=$(aws ssm send-command \
+  --instance-ids "$STAGING_INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters file:///tmp/ssm-restore-commands.json \
+  --timeout-seconds 600 \
+  --output text \
+  --query "Command.CommandId")
+```
+
+腳本執行的步驟：
+1. `pg_terminate_backend` — 斷開所有連到目標 DB 的 session
+2. `DROP DATABASE IF EXISTS` — 刪除舊 DB
+3. `CREATE DATABASE` — 建立空 DB
+4. `psql < dump.sql` — 匯入資料
+5. 查詢 `table_count` — 驗證結果
+
+### A7. 驗證
+
+```bash
+# 檢查 table 數量（從上一步輸出確認）
+# 檢查 stderr 是否有錯誤
+aws ssm get-command-invocation \
+  --command-id "$COMMAND_ID" \
+  --instance-id "$STAGING_INSTANCE_ID" \
+  --query "[Status, StandardErrorContent]" --output text
+```
+
+### A8. 清理暫存
+
+```bash
+# 清理 Production 上的暫存（如果有）
+rm -f /home/apps/{app_name}_YYYYMMDD.sql.gz
+
+# 清理 S3 上的暫存（如果有）
+aws s3 rm s3://{bucket}/db-backup/{app_name}_YYYYMMDD.sql.gz
+
+# Staging 上的 dump 檔可保留作為回滾用，或清理
+# rm -f /tmp/db_restore.sh
+```
+
+---
+
+## Path B：選擇性遷移（Production → Local/Staging）
+
+適用場景：只需要特定 table 或特定時間範圍的資料，用於除錯或分析。
+
+### B1. 識別敏感欄位（若需要清理）
 
 自動偵測以下類型的敏感欄位：
 
@@ -60,114 +226,62 @@ version: 1.0.0
 | 身分證 | `*id_number*`, `*identity*` | 替換為 `A000000000` |
 | 銀行帳號 | `*bank*`, `*account*` | 替換為 `000-0000000` |
 
-### 3. 建立遷移腳本
+> **Production → Staging（同 VPC）** 且用戶確認不需要清理時，可跳過此步驟。
 
-**基本結構**：
+### B2. 匯出資料
+
+**方法 A：使用 pg_dump（單表或多表）**
+
+```bash
+# 單表匯出
+PGPASSWORD={password} pg_dump -h {rds_host} -U {user} -d {db_name} \
+  -t {table_name} --data-only \
+  -f /tmp/{table_name}.sql
+
+# 多表匯出
+PGPASSWORD={password} pg_dump -h {rds_host} -U {user} -d {db_name} \
+  -t table1 -t table2 -t table3 --data-only \
+  -f /tmp/selected_tables.sql
+```
+
+**方法 B：使用 Rails Runner（需要條件過濾時）**
 
 ```ruby
-# /tmp/migrate_data.rb
-# 資料遷移腳本
-# 建立時間：{timestamp}
-# 目的：{description}
-# 預計刪除：執行後立即刪除
-
+# /tmp/export_data.rb
 require 'csv'
 
-# 1. 查詢需要的資料
-data = {Model}.where({conditions}).limit({limit})
+records = Invoice.where(created_at: 30.days.ago..Time.current).limit(1000)
 
-# 2. 輸出為 CSV（不含敏感資料）
 CSV.open('/tmp/export.csv', 'w') do |csv|
-  csv << data.first.attributes.keys.reject { |k| sensitive_columns.include?(k) }
-  data.each do |record|
-    csv << record.attributes.values_at(*safe_columns)
-  end
+  csv << records.first.attributes.keys
+  records.each { |r| csv << r.attributes.values }
 end
 
-puts "Exported #{data.count} records"
+puts "Exported #{records.count} records"
 ```
 
-### 4. 執行 Production 資料匯出
-
-**方法 A：使用 Rails Runner**
+### B3. 下載到本地（如果目標是 Local）
 
 ```bash
-INSTANCE_ID="<從 aws-instances.yml 查詢>"
-
-# 建立並執行匯出腳本
-COMMAND_ID=$(aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
-  --parameters commands='["cat > /tmp/export_data.rb << '\''SCRIPT'\''
-# 匯出腳本
-records = Invoice.where(created_at: 30.days.ago..Time.current).limit(100)
-
-require \"csv\"
-CSV.open(\"/tmp/export.csv\", \"w\") do |csv|
-  csv << [\"id\", \"serial\", \"amount\", \"status\", \"created_at\"]
-  records.each do |r|
-    csv << [r.id, r.serial, r.amount, r.status, r.created_at]
-  end
-end
-puts \"Exported #{records.count} records\"
-SCRIPT", "sudo su - apps -c '\''export PATH=\"/home/apps/.rbenv/bin:/home/apps/.rbenv/shims:$PATH\" && eval \"$(rbenv init -)\" && cd ${APP_DIR}/current && RAILS_ENV=production bundle exec rails runner /tmp/export_data.rb'\''"]' \
-  --output text \
-  --query "Command.CommandId")
-
-sleep 30 && aws ssm get-command-invocation \
-  --command-id "$COMMAND_ID" \
-  --instance-id "$INSTANCE_ID" \
-  --query "StandardOutputContent" \
-  --output text
-```
-
-**方法 B：使用 pg_dump（單表）**
-
-```bash
-INSTANCE_ID="<從 aws-instances.yml 查詢>"
-TABLE_NAME="invoices"
-
-COMMAND_ID=$(aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name "AWS-RunShellScript" \
-  --parameters commands="[\"pg_dump -U postgres -d sf_project_production -t ${TABLE_NAME} --data-only -f /tmp/${TABLE_NAME}.sql\", \"ls -la /tmp/${TABLE_NAME}.sql\"]" \
-  --output text \
-  --query "Command.CommandId")
-
-sleep 10 && aws ssm get-command-invocation \
-  --command-id "$COMMAND_ID" \
-  --instance-id "$INSTANCE_ID" \
-  --query "StandardOutputContent" \
-  --output text
-```
-
-### 5. 下載匯出的資料
-
-```bash
-# 從遠端 cat 出 CSV 內容
+# 透過 SSM cat 取得小型檔案
 COMMAND_ID=$(aws ssm send-command \
   --instance-ids "$INSTANCE_ID" \
   --document-name "AWS-RunShellScript" \
   --parameters 'commands=["cat /tmp/export.csv"]' \
-  --output text \
-  --query "Command.CommandId")
+  --output text --query "Command.CommandId")
 
-sleep 5 && aws ssm get-command-invocation \
+aws ssm get-command-invocation \
   --command-id "$COMMAND_ID" \
   --instance-id "$INSTANCE_ID" \
   --query "StandardOutputContent" \
   --output text > /tmp/downloaded_data.csv
 ```
 
-### 6. 清理敏感資料（本地處理）
+### B4. 清理敏感資料（本地處理，若需要）
 
 ```ruby
-# 本地清理腳本
 require 'csv'
 
-SENSITIVE_COLUMNS = %w[email phone address password_digest token]
-
-# 讀取並清理
 data = CSV.read('/tmp/downloaded_data.csv', headers: true)
 
 data.each do |row|
@@ -178,61 +292,84 @@ data.each do |row|
   row['token'] = nil if row['token']
 end
 
-# 輸出清理後的資料
 CSV.open('/tmp/sanitized_data.csv', 'w') do |csv|
   csv << data.headers
   data.each { |row| csv << row.values_at(*data.headers) }
 end
 ```
 
-### 7. 匯入到本地資料庫
+### B5. 匯入
 
 ```bash
-# 使用 psql COPY
-# 路徑從 .claude/config/projects.yml 取得
-cd {project_path}
-RAILS_ENV=development rails runner "
-  require 'csv'
-  CSV.foreach('/tmp/sanitized_data.csv', headers: true) do |row|
-    Invoice.create!(row.to_h.except('id'))
-  end
-"
+# SQL 匯入
+psql -d {db_name} < /tmp/selected_tables.sql
 
-# 或使用 SQL COPY
-psql -d sf_project_development -c "COPY invoices FROM '/tmp/sanitized_data.csv' CSV HEADER"
+# 或 CSV 匯入
+psql -d {db_name} -c "COPY {table} FROM '/tmp/sanitized_data.csv' CSV HEADER"
 ```
 
-### 8. 驗證資料完整性
+### B6. 驗證 + 清理
 
 ```bash
-# 確認 record count（路徑從 .claude/config/projects.yml 取得）
-cd {project_path}
-rails runner "puts 'Local count: ' + Invoice.count.to_s"
+# 驗證
+psql -d {db_name} -c "SELECT count(*) FROM {table};"
 
-# 確認關聯資料
-rails runner "
-  Invoice.last(10).each do |inv|
-    puts \"#{inv.serial}: project=#{inv.project.present?}, items=#{inv.items.count}\"
-  end
-"
+# 清理遠端暫存
+rm -f /tmp/export_data.rb /tmp/export.csv /tmp/*.sql
 ```
 
-### 9. 清理遠端暫存檔案
+---
+
+## SSM 實用技巧
+
+### 避免引號地獄
+
+SSM `send-command` 的多層引號 escape 非常容易出錯。推薦做法：
+
+**方法一：JSON 檔案傳參數（推薦）**
 
 ```bash
-COMMAND_ID=$(aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
+# 本地建立 JSON 參數檔
+cat > /tmp/ssm-commands.json << 'EOF'
+{
+  "commands": [
+    "printf '#!/bin/bash\\n...' > /tmp/script.sh",
+    "chmod +x /tmp/script.sh",
+    "sudo su - apps -c 'bash /tmp/script.sh 2>&1'"
+  ]
+}
+EOF
+
+aws ssm send-command --instance-ids "$ID" \
   --document-name "AWS-RunShellScript" \
-  --parameters 'commands=["rm -f /tmp/export_data.rb /tmp/export.csv /tmp/*.sql", "ls -la /tmp/*.csv /tmp/*.sql 2>/dev/null || echo No temp files found"]' \
-  --output text \
-  --query "Command.CommandId")
+  --parameters file:///tmp/ssm-commands.json
+```
 
-sleep 5 && aws ssm get-command-invocation \
+**方法二：簡單命令可直接用 parameters**
+
+```bash
+aws ssm send-command --instance-ids "$ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["ls -la /home/apps/"]'
+```
+
+### 等待 SSM 命令完成
+
+```bash
+# 送出命令後取得 CommandId
+COMMAND_ID=$(aws ssm send-command ... --output text --query "Command.CommandId")
+
+# 等待並取得結果（根據預期時間調整 sleep）
+sleep {seconds} && aws ssm get-command-invocation \
   --command-id "$COMMAND_ID" \
   --instance-id "$INSTANCE_ID" \
-  --query "StandardOutputContent" \
+  --query "[Status, StandardOutputContent, StandardErrorContent]" \
   --output text
+
+# 如果 Status 是 InProgress，再等一下重試
 ```
+
+---
 
 ## Safety Guidelines
 
@@ -241,25 +378,41 @@ sleep 5 && aws ssm get-command-invocation \
 ```
 ❌ 將 Local/Staging 資料推到 Production
 ❌ 直接在 Production 執行 UPDATE/DELETE
-❌ 保留未清理的敏感資料
-❌ 遷移超過必要範圍的資料
+❌ 遷移超過必要範圍的資料（selective 模式）
 ```
 
 ### 必須執行
 
 ```
 ✅ 遷移前確認需求和範圍
-✅ 自動偵測並清理敏感欄位
-✅ 遷移後清理遠端暫存檔案
-✅ 驗證本地資料完整性
+✅ 遷移前檢查磁碟空間
+✅ 全庫同步前確認用戶同意覆蓋目標 DB
+✅ 遷移後驗證資料完整性
+✅ 清理遠端暫存檔案
+```
+
+### 敏感資料處理原則
+
+```
+Production → Local     # 建議清理敏感資料
+Production → Staging   # 同 VPC 內可選擇保留，由用戶決定
 ```
 
 ## Common Patterns
 
+### 全庫同步到 Staging（最常見）
+
+```
+1. 確認 staging 能直連 production RDS
+2. 檢查磁碟空間，清理舊 dump
+3. 在 staging 上 pg_dump production RDS
+4. terminate connections → drop → create → restore
+5. 驗證 table count
+```
+
 ### 遷移特定專案的資料
 
 ```ruby
-# 匯出與專案相關的所有資料
 project = Project.find_by(serial: 'RT130044')
 export_data = {
   project: project.attributes,
@@ -269,19 +422,10 @@ export_data = {
 File.write('/tmp/project_data.json', export_data.to_json)
 ```
 
-### 遷移指定時間範圍
-
-```ruby
-# 最近 30 天的資料
-Invoice.where(created_at: 30.days.ago..Time.current)
-  .includes(:project, :items)
-```
-
 ### 只遷移結構（不含資料）
 
 ```bash
-# 只匯出 schema
-pg_dump -U postgres -d sf_project_production --schema-only -f /tmp/schema.sql
+pg_dump -h {rds_host} -U {user} -d {db_name} --schema-only -f /tmp/schema.sql
 ```
 
 ## Output Format
@@ -292,18 +436,15 @@ pg_dump -U postgres -d sf_project_production --schema-only -f /tmp/schema.sql
 ┌──────────────────────────────────────────────────────┐
 │ 📦 資料遷移完成                                       │
 ├──────────────────────────────────────────────────────┤
-│ 來源：Production (<INSTANCE_ID>)                      │
-│ 目標：Local (development)                            │
+│ 來源：Production RDS ({prod_rds_host})               │
+│ 目標：Staging RDS ({staging_rds_host})               │
+│ 資料庫：{db_name}                                     │
 │                                                      │
 │ 📊 遷移統計：                                        │
-│   • invoices: 100 筆                                 │
-│   • payments: 45 筆                                  │
+│   • 資料表數：{table_count} 張                        │
+│   • Dump 大小：{size}                                │
 │                                                      │
-│ 🔒 敏感資料處理：                                    │
-│   • email: 已替換                                    │
-│   • phone: 已替換                                    │
-│                                                      │
-│ ✅ 遠端暫存已清理                                    │
-│ ✅ 本地資料已驗證                                    │
+│ ✅ 無錯誤 / ⚠️ 有警告（列出）                        │
+│ ✅ 目標 DB 已完整覆蓋                                │
 └──────────────────────────────────────────────────────┘
 ```
