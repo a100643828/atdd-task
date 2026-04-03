@@ -35,6 +35,13 @@
     "issueKey": null,
     "url": null
   },
+  "causation": {
+    "causedBy": null,
+    "rootCauseType": null,
+    "discoveredIn": null,
+    "discoveredAt": null,
+    "timeSinceIntroduced": null
+  },
   "context": {
     "background": "",
     "relatedDomains": [],
@@ -48,6 +55,29 @@
   "updatedAt": "{ISO timestamp}"
 }
 ```
+
+## Causation 欄位說明（Fix 任務專用）
+
+`causation` 用於追蹤 bug 的因果關係，在 specist 調查階段填寫：
+
+```json
+"causation": {
+  "causedBy": {                    // 造成此 bug 的原始任務（調查後填寫）
+    "taskId": "a8a9f6d2-...",      //   原始任務 ID
+    "commitHash": "abc123",        //   造成問題的 commit
+    "description": "月結分帳功能"   //   原始任務描述
+  },
+  "rootCauseType": "feature-defect",  // feature-defect | fix-regression | legacy | unknown | environment | dependency
+  "discoveredIn": "production",       // production | staging | e2e | review | development
+  "discoveredAt": "2026-04-03T10:00:00Z",  // 問題被發現的時間
+  "timeSinceIntroduced": "32d"             // 自動計算：discoveredAt - causedBy.completedAt
+}
+```
+
+- `causedBy`: 調查階段才填寫，非建立時。Specist 可用 `git blame` → commit → 反查 task JSON 的 `context.commitHash` 來追溯
+- `rootCauseType`: 分類 bug 根因，用於統計分析
+- `discoveredIn`: 在哪個環節發現，用於計算 Escape Rate
+- Feature/Refactor/Test 任務的 `causation` 保持 null
 
 ## Completed 任務 JSON（額外欄位）
 
