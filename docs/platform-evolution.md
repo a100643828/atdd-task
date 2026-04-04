@@ -115,39 +115,39 @@ Organization: "公司"           Organization: "個人"
 
 ---
 
-## Phase 2: API Server + DB ⬜ 待做
+## Phase 2: API Server + DB ✅ 完成
 
-### 2-1. PostgreSQL Schema
-```sql
--- Core tables
-tasks (id UUID PK, project, type, status, domain, description, causation JSONB, ...)
-task_history (task_id FK, phase, timestamp, agent, note)
-task_metrics (task_id FK, agent, tool_uses, tokens, duration)
+### 2-1. PostgreSQL Schema ✅ 完成
+- Migration: `server/db/migrations/001_initial.sql`
+- Runner: `server/db/migrate.py`（plain SQL, no ORM — 語言中立）
+- Multi-org: 所有 tenant 表含 `org_id`，seed default org `personal`
+- Tables: organizations, tasks, task_history, task_metrics, domains, domain_couplings, knowledge_entries, knowledge_terms, reports
+- Auto `updated_at` triggers, composite indexes
 
--- Domain health
-domains (id, project, name, health_score, status, calculated_at)
-domain_couplings (domain_a, domain_b, co_occurrence_count)
+### 2-2. FastAPI Application ✅ 完成
+- Directory: `server/api/`
+- DB: `db.py`（psycopg2 connection pool, raw SQL）
+- Routers: `tasks.py`, `domains.py`, `reports.py`
+- Endpoints: CRUD + upsert + history + metrics
+- Docker: `server/api/Dockerfile`, auto-migrate on startup
 
--- Knowledge (段落級)
-knowledge_entries (id, project, domain, file_type, section, content, version, updated_by, updated_at)
-knowledge_terms (id, project, domain, english_term, chinese_term, context, source)
+### 2-3. Data Migration ✅ 完成
+- Script: `server/db/import_data.py`
+- Dry-run verified: 259 tasks, 973 knowledge entries, 55 domain health entries
+- Supports: `--dry-run`, `--tasks-only`, `--knowledge-only`, `--health-only`
+- Parses: task JSON fields, UL terms, markdown sections, domain-health.json
 
--- Reports
-reports (id, project, type, period, data JSONB, created_at)
-```
+### 2-4. Slack Bot 切換 ✅ 完成（dual-write）
+- `bot/api_client.py`: HTTP client for API（stdlib only, no extra deps）
+- `bot/app.py`: BA 確認後 dual-write（file + API sync）
+- API health check on startup
+- Non-fatal: API sync 失敗不影響主流程（漸進遷移）
+- `git_sync.py` 保留（GitHub 備份仍需要）
 
-### 2-2. FastAPI Application
-- 加到現有 `server/` 目錄
-- REST API: /api/v1/tasks, /api/v1/domains, /api/v1/reports
-- SSE: /api/v1/events
-
-### 2-3. Data Migration
-- 259 筆歷史任務 JSON → PostgreSQL
-- Knowledge files → knowledge_entries + knowledge_terms
-
-### 2-4. Slack Bot 切換
-- `bot/app.py` 改為呼叫 API（不再直接寫檔）
-- `git_sync.py` → API-triggered sync
+### Infrastructure
+- `docker-compose.yml`: 加入 `db` (PostgreSQL 16) + `api` service
+- `nginx.conf`: `/api/` proxy 到 api service
+- `.env.example`: 加入 DATABASE_URL
 
 ---
 
