@@ -151,33 +151,62 @@ Organization: "公司"           Organization: "個人"
 
 ---
 
-## Phase 3: ATDD MCP Server ⬜ 待做
+## Phase 3: ATDD MCP Server ✅ 完成
 
-### 3-1. MCP Server 開發
-- Python MCP Server，連接 API
-- Tools: atdd_task_*, atdd_domain_*, atdd_causation_*, atdd_report_*
-- Claude Code 的 `.claude/settings.json` 加入 MCP 設定
+### 3-1. MCP Server 開發 ✅ 完成
+- Directory: `server/mcp/`
+- Python MCP Server (FastMCP)，透過 HTTP 連接 API Server
+- 22 Tools: atdd_task_* (7), atdd_domain_* (4), atdd_knowledge_* (7), atdd_report_* (3), atdd_health (1)
+- `.mcp.json` 設定 MCP Server（venv with Python 3.13）
+- API 補齊：新增 knowledge router（entries CRUD + terms upsert）
 
-### 3-2. Skill/Command 遷移
-- /fix, /feature, /done 等命令改為呼叫 MCP tools
-- Agent 讀取知識改為 MCP tools
-- File Generator: DB → local files（backward compat）
+### 3-2. Skill/Command 遷移 ✅ 完成
+- DB Migration: 擴充 `task_status` enum，加入 ATDD pipeline 名稱（requirement, specification, testing, development, review, failed）
+- Migration runner: 支援 `ALTER TYPE ... ADD VALUE`（autocommit mode）
+- Dual-Write 架構：MCP tools 為主寫入路徑，本地 JSON 保留給 subagent 讀取
+- Shared modules 遷移（最高槓桿）：
+  - `task-json-template.md`：任務建立改用 `atdd_task_create` → DB 產生 UUID
+  - `task-state-update.md`：6 個事件全部加入 MCP 同步（`atdd_task_update` + `atdd_task_add_history`）
+- Create commands（feature/fix/refactor）：Step 5 Jira 回寫加 MCP sync
+- Read commands（continue/status/done/close/abort/escape/verify）：任務發現改用 `atdd_task_list`，保留 local fallback
+- Utility commands（commit/e2e-manual）：加 MCP sync
+- Agent prompt（agent-call-patterns）：加入 `任務 DB ID` 欄位（Phase 3-3 準備）
+- Agent 知識讀取遷移：
+  - `knowledge/access/reader.md`：所有讀取操作加入 MCP 優先路徑（atdd_term_list, atdd_knowledge_list, atdd_domain_list, atdd_coupling_list）
+  - `specist.md`：Phase 1 UL 術語用 atdd_term_list，Domain Health 用 atdd_domain_list；Phase 2 規則/strategic/tactical 用 atdd_knowledge_list
+  - `gatekeeper.md`：Domain Health Gate 用 atdd_domain_list
+  - coder/tester：知識讀取較少，domain-map 未入 DB，維持 local
+- File Generator：`server/mcp/file_generator.py` — DB → local JSON 同步腳本
+  - 支援：`--project`, `--task`, `--all`, `--dry-run`
+  - Status → directory 自動映射（active/deployed/completed/failed/escaped）
+  - 自動清理舊目錄（任務狀態變更時移除舊位置的檔案）
 
 ---
 
-## Phase 4: Web Dashboard ⬜ 待做
+## Phase 4: Web Dashboard ✅ 完成
 
 ### 4-1. 技術棧
-- FastAPI + Jinja2 + HTMX + Chart.js
-- SSE 即時更新
-- 部署到現有 Nginx（/dashboard 路由）
+- FastAPI + Jinja2 + HTMX + Chart.js + PicoCSS（全 CDN，無 npm build）
+- HTMX partial swap（偵測 `HX-Request` header）
+- 部署到現有 Nginx（`/dashboard` + `/static/` proxy）
 
-### 4-2. 頁面
-- Executive Overview（交付/品質/成本指標）
-- Domain Health Map（heatmap + coupling graph）
-- Task Board（取代 markdown kanban，含 deployed/verified）
-- Causation Explorer（fix chain 視覺化）
-- Domain Diagnostic Report（per-domain 詳情）
+### 4-2. 架構
+- `server/api/routers/views.py`：5 個頁面路由 + task detail modal，直接查 DB（不走 HTTP API）
+- `server/api/templates/`：Jinja2 模板（base + 5 pages + partials）
+- `server/api/static/`：CSS + JS（dashboard.css, charts）
+- Status → Kanban column 映射：14 個 DB status 對應 8 個 column，定義在 `views.py` 常數
+
+### 4-3. 頁面（5 個）
+1. **Executive Overview** (`/dashboard/`)：交付/品質/成本指標、週趨勢 line chart、成本 bar chart、時間/專案篩選
+2. **Domain Health Map** (`/dashboard/domains`)：CSS Grid heatmap（green/yellow/red）、coupling table、點擊 drill-down
+3. **Task Board** (`/dashboard/tasks`)：Kanban 8 欄（Requirement→Completed）、專案/類型篩選、點擊 task 開 modal 顯示 history timeline
+4. **Causation Explorer** (`/dashboard/causation`)：Fix 任務表（root cause type + discovered in + caused by link）、fix-regression 標記、摘要統計
+5. **Domain Diagnostic** (`/dashboard/domains/{name}`)：Health radar chart、fix timeline、knowledge doughnut、recent tasks table、coupling relationships
+
+### 4-4. 未做（Phase 5 範圍）
+- SSE 即時更新（目前用 HTMX 輪詢）
+- 認證 + 角色權限
+- Org switcher
 
 ---
 
