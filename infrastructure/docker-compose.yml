@@ -1,0 +1,87 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: atdd
+      POSTGRES_USER: atdd
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atdd}
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atdd"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: ../ports/api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://atdd:${POSTGRES_PASSWORD:-atdd}@db:5432/atdd
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount data/db for migrations
+      - ../data/db:/app/db:ro
+      # Mount worker for API worker triggers
+      - ../ports/worker:/app/worker:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  bot:
+    build: ../ports/slack
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - ATDD_HUB_PATH=/app/atdd-hub
+      - API_BASE_URL=http://api:8000
+    volumes:
+      # atdd-hub repo (server clone, single writer)
+      - ${ATDD_HUB_PATH:-/opt/atdd-hub}:/app/atdd-hub
+      # Claude CLI session persistence (claude login + conversation sessions)
+      - claude-data:/home/app/.claude
+    depends_on:
+      - api
+
+  worker:
+    build: ../ports/api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://atdd:${POSTGRES_PASSWORD:-atdd}@db:5432/atdd
+    depends_on:
+      db:
+        condition: service_healthy
+    # Run cron jobs: auto-verify (daily 9am), domain health (daily 2am), weekly report (Monday 8am)
+    entrypoint: ["sh", "-c", "
+      echo '0 9 * * * cd /app && python3 -m worker.auto_verify --slack-notify' > /tmp/cron &&
+      echo '0 2 * * * cd /app && python3 -m worker.domain_health_recalc' >> /tmp/cron &&
+      echo '0 8 * * 1 cd /app && python3 -m worker.weekly_report --all-projects --save' >> /tmp/cron &&
+      crontab /tmp/cron &&
+      crond -f -l 2
+    "]
+    volumes:
+      - ../ports/worker:/app/worker:ro
+      - ../data/db:/app/db:ro
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - api
+      - bot
+
+volumes:
+  pgdata:
+  claude-data:
