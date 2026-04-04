@@ -210,15 +210,57 @@ Organization: "公司"           Organization: "個人"
 
 ---
 
-## Phase 5: 智慧閉環 ⬜ 待做
+## Phase 5: 智慧閉環 ✅ 完成
 
-- Deployed auto-verify（cron: low-risk 7天自動、high-risk Slack 提醒）
-- 週報/月報自動產生 + Slack 推送
-- Domain health → 自動建議 refactor 票
-- 靜態分析整合（RuboCop/Reek/Flog/Packwerk）
-- Escape rate 回饋 → 校準 gate 標準
-- 多專案對比分析
+### 5-1. 週報自動產生 ✅ 完成
+- Script: `server/worker/weekly_report.py`
+- DB 聚合計算：交付（completed/created by type, cycle time）、品質（escape rate, true completion rate）、成本（tokens by type, fix cost ratio）、domain hotspots
+- 輸出格式：text（Slack 用）、JSON（API 用）
+- CLI: `--week 2026-W14 --project core_web --save --all-projects`
+- API trigger: `POST /api/v1/workers/weekly-report`
+- Cron: 每週一 8:00 自動執行
+
+### 5-2. Deployed Auto-Verify ✅ 完成
+- Script: `server/worker/auto_verify.py`
+- 風險分級自動判斷：domain health status + task type + explicit riskLevel
+- Low risk: 7 天無 fix 票自動 verified
+- Medium risk: 14 天自動 verified
+- High risk: 不自動，超 14 天 Slack 提醒
+- 檢查 causation.causedBy 是否有相關 fix 票
+- API trigger: `POST /api/v1/workers/auto-verify`
+- Cron: 每日 9:00
+
+### 5-3. Domain Health 自動重算 ✅ 完成
+- Script: `server/worker/domain_health_recalc.py`
+- 從 DB 聚合計算：fix rate, coupling, change freq, knowledge coverage, escape rate
+- Upsert 到 domains 表 + 重算 coupling pairs
+- API trigger: `POST /api/v1/workers/domain-health`
+- Cron: 每日 2:00
+
+### 5-4. SSE 即時更新 ✅ 完成
+- Router: `server/api/routers/events.py`
+- SSE endpoint: `GET /api/v1/events/stream`
+- Events: task.updated, task.created, domain.recalculated, report.generated, deploy.verified, deploy.alert
+- Dashboard `base.html` 自動訂閱，收到事件後 HTMX partial refresh
+- Toast notification（5 秒自動消失）
+
+### 5-5. Worker Trigger API ✅ 完成
+- Router: `server/api/routers/workers.py`
+- `POST /api/v1/workers/weekly-report` — 觸發週報
+- `POST /api/v1/workers/auto-verify` — 觸發 auto-verify
+- `POST /api/v1/workers/domain-health` — 觸發 health 重算
+- 每個 trigger 自動 broadcast SSE event
+
+### 5-6. Docker Compose Worker Service ✅ 完成
+- `docker-compose.yml` 加入 `worker` service
+- Cron schedule: auto-verify(每日9am), domain-health(每日2am), weekly-report(每週一8am)
+
+### 5-7. 未做（未來擴展）
 - 認證 + 角色權限（PM/Dev/Manager/Client）
+- Org switcher（multi-org dashboard 切換）
+- 靜態分析整合（RuboCop/Reek/Flog/Packwerk — 已有 /domain-diagnose skill 框架）
+- Escape rate 回饋 → 自動校準 gate 標準
+- 多專案對比分析
 
 ---
 

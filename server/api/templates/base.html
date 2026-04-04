@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-TW" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ATDD Dashboard{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+  <nav class="container-fluid">
+    {% include "partials/_nav.html" %}
+  </nav>
+  <main class="container-fluid">
+    <div id="content">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+  {% block scripts %}{% endblock %}
+  <script>
+  // SSE: Auto-refresh dashboard on server events
+  (function() {
+    const evtSource = new EventSource('/api/v1/events/stream');
+    const refreshEvents = ['task.updated', 'task.created', 'domain.recalculated',
+                           'report.generated', 'deploy.verified', 'deploy.alert'];
+
+    refreshEvents.forEach(function(evt) {
+      evtSource.addEventListener(evt, function(e) {
+        // Show notification
+        const data = JSON.parse(e.data);
+        const toast = document.createElement('div');
+        toast.className = 'sse-toast';
+        toast.textContent = evt.replace('.', ' ') + ': ' + JSON.stringify(data);
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 5000);
+
+        // Refresh current page content via HTMX
+        const content = document.getElementById('content');
+        if (content) {
+          htmx.ajax('GET', window.location.pathname, {target: '#content', swap: 'innerHTML'});
+        }
+      });
+    });
+
+    evtSource.onerror = function() {
+      console.log('SSE connection lost, will retry...');
+    };
+  })();
+  </script>
+</body>
+</html>
