@@ -4,8 +4,11 @@
       "command": "ports/mcp/.venv/bin/python3",
       "args": ["ports/mcp/server.py"],
       "env": {
-        "ATDD_API_URL": "http://localhost:8000",
-        "ATDD_ORG": "00000000-0000-0000-0000-000000000001"
+        "ATDD_API_URL": "http://localhost:8001",
+        "ATDD_ORG": "00000000-0000-0000-0000-000000000001",
+        "ATDD_SERVER_API_URL": "https://atdd.sunnyfounder.com",
+        "ATDD_SERVER_API_KEY": "5f464a57a4492bbde26e51f97488680b",
+        "ATDD_SERVER_ORG": "00000000-0000-0000-0000-000000000002"
       }
     }
   }
